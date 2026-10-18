@@ -1,0 +1,24 @@
+# Build stage
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+COPY apps/api/package.json apps/api/
+COPY packages/shared/package.json packages/shared/
+RUN npm ci --workspaces --include-workspace-root
+COPY tsconfig.base.json ./
+COPY packages/shared packages/shared
+COPY apps/api apps/api
+COPY prisma prisma
+RUN npm run build -w @cafe/shared && npm run build -w @cafe/api && npx prisma generate --schema prisma/schema.prisma
+
+# Runtime stage
+FROM node:24-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/apps/api/dist ./apps/api/dist
+COPY --from=build /app/apps/api/package.json ./apps/api/
+COPY --from=build /app/packages/shared/dist ./packages/shared/dist
+COPY --from=build /app/prisma ./prisma
+EXPOSE 4000
+CMD ["node", "apps/api/dist/index.js"]
