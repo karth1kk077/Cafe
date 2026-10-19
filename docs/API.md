@@ -1,6 +1,6 @@
 # API Documentation
 
-Base URL: `/api`. Auth via HttpOnly cookie (`cafe_token`) or `Authorization: Bearer <jwt>`.
+Base URL: `/api`. Staff auth via HttpOnly cookie (`cafe_token`) or `Authorization: Bearer <jwt>`.
 Errors return `{ "error": { "code": string, "message": string, "details"? } }`.
 Money fields are integer minor units (`*Minor`). Validation failures return `422`.
 
@@ -13,16 +13,26 @@ Money fields are integer minor units (`*Minor`). Validation failures return `422
 
 Roles: `CUSTOMER`, `WAITER`, `KITCHEN`, `ADMIN`.
 
-## Public (`/api/public`) — no auth, order gated by active session
-| Method | Path | Notes |
-|--------|------|-------|
-| GET | `/menu` | categories + items + variants + addons + settings |
-| GET | `/tables/:tableCode` | resolve QR token -> table + active session + `canOrder` |
-| POST | `/orders` | create order; body `{tableCode, idempotencyKey, items[]}`; 409 `SESSION_CLOSED` if no active session; prices computed server-side |
-| GET | `/orders/:orderId` | order status/items |
-| GET | `/sessions/:sessionId/orders` | all orders for a session |
-| POST | `/sessions/:sessionId/request-bill` | marks session `BILL_REQUESTED` |
-| POST | `/sessions/:sessionId/assistance` | create assistance request |
+## Customer session authorization
+
+Customers are account-less. `GET /public/tables/:tableCode` resolves the QR token and, when a
+session is orderable, mints a **session-scoped token** (signed JWT, claim `{scope:"customer",
+sessionId, tableId}`). The SPA stores it and sends it as the `x-session-token` header on every
+subsequent customer call. The server never trusts a client-supplied session/table id: it uses the
+token's `sessionId`, and rejects requests whose token session does not match the resource. A page
+holding a token for a **closed** session is rejected with `409 SESSION_CLOSED`, so a stale tab or
+saved QR cannot silently order into the next session at the same table.
+
+## Public (`/api/public`)
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| GET | `/menu` | public | categories + items + variants + addons + settings |
+| GET | `/tables/:tableCode` | public | resolve QR token -> `{table, session, canOrder, sessionToken}` |
+| POST | `/orders` | `x-session-token` | create order; body `{idempotencyKey, items[]}` (no table/session/client prices); 409 `SESSION_CLOSED`; prices computed server-side |
+| GET | `/orders/:orderId` | `x-session-token` | order + per-item status (404 if not in the token's session) |
+| GET | `/sessions/:sessionId/orders` | `x-session-token` | all orders for the authorized session |
+| POST | `/sessions/:sessionId/request-bill` | `x-session-token` | marks session `BILL_REQUESTED` |
+| POST | `/sessions/:sessionId/assistance` | `x-session-token` | create assistance request |
 
 Order item input: `{menuItemId, variantId?, addonIds?, quantity, specialInstructions?}`.
 Client-sent prices/totals are ignored.
@@ -30,16 +40,19 @@ Client-sent prices/totals are ignored.
 ## Staff (`/api/staff`) — JWT required, role-gated
 | Method | Path | Role | Notes |
 |--------|------|------|-------|
-| GET | `/tables` | any staff | tables + active session summary |
+| GET | `/tables` | any staff | tables + active session + open order items |
 | POST | `/tables` | ADMIN | create table (generates QR token) |
+| PATCH | `/tables/:tableId` | ADMIN | update number/seats/isActive; `{rotateQr:true}` rotates the QR token |
 | POST | `/tables/:tableId/sessions` | WAITER/ADMIN | open session (409 if one active) |
 | GET | `/sessions/:sessionId` | WAITER/ADMIN | session detail |
 | POST | `/sessions/:sessionId/close` | WAITER/ADMIN | 409 `UNPAID_BALANCE` / `UNRESOLVED_ORDERS` |
 | POST | `/sessions/:sessionId/reopen` | ADMIN | audited reopen |
-| GET | `/orders` | KITCHEN/WAITER/ADMIN | `?status=A,B` filter |
-| GET | `/orders/:orderId` | KITCHEN/WAITER/ADMIN | order detail |
-| PATCH | `/orders/:orderId/status` | KITCHEN/WAITER/ADMIN | transition; 409 on invalid jump |
-| POST | `/bills/generate` | WAITER/ADMIN | `{sessionId}`; immutable snapshot |
+| GET | `/orders` | KITCHEN/WAITER/ADMIN | `?status=A,B` filter (derived summary statuses) |
+| GET | `/orders/:orderId` | KITCHEN/WAITER/ADMIN | order detail incl. item statuses + history |
+| GET | `/order-items/ready` | WAITER/ADMIN | ready-dish pickup queue (oldest first) |
+| PATCH | `/order-items/:itemId/status` | KITCHEN/WAITER/ADMIN | transition one item; role + legality enforced; 409 `INVALID_TRANSITION` |
+| POST | `/order-items/:itemId/cancel` | KITCHEN/WAITER/ADMIN | cancel one item `{reason?}`; post-prep cancel requires supervisor (WAITER/ADMIN) |
+| POST | `/bills/generate` | WAITER/ADMIN | `{sessionId}`; immutable snapshot; cancelled items excluded |
 | GET | `/bills/:billId` | WAITER/ADMIN | bill + lines + payments |
 | POST | `/payments` | WAITER/ADMIN | `{billId,amountMinor,method,reference?}`; 409 overpay/already-paid |
 | GET | `/assistance` | WAITER/ADMIN | open requests |
@@ -51,6 +64,22 @@ Client-sent prices/totals are ignored.
 | POST | `/admin/menu/items` | ADMIN | create item |
 | PATCH | `/admin/menu/items/:itemId` | ADMIN | update/price/availability |
 
+## Item lifecycle (per line item)
+
+`QUEUED → PREPARING → READY → SERVED`, with `CANCELLED` allowed from `QUEUED` (KITCHEN/WAITER/ADMIN)
+and `PREPARING` (WAITER/ADMIN), and from `READY` (ADMIN only). `SERVED`/`CANCELLED` are terminal.
+`PATCH /order-items/:itemId/status` rejects any other jump with `409 INVALID_TRANSITION`; a role
+that may not perform the step gets `403`. Each accepted change appends an immutable
+`OrderItemEvent` and an `AuditLog`, and recomputes the order's derived summary.
+
+## Order summary (derived, read-only)
+
+`RECEIVED → IN_PROGRESS → PARTIALLY_READY → READY → COMPLETED`, plus `CANCELLED`. It is recomputed
+from the line items on every transition (see `apps/api/src/lib/orderState.ts`) and is never set
+directly by a client. `COMPLETED` = every active item served; `READY` = every active item
+ready-or-served; `PARTIALLY_READY` = some active item ready/served; `IN_PROGRESS` = some item
+preparing; otherwise `RECEIVED`. Cancelled items are ignored.
+
 ## Health (`/api`)
 | Method | Path | Notes |
 |--------|------|-------|
@@ -58,15 +87,22 @@ Client-sent prices/totals are ignored.
 | GET | `/ready` | readiness (checks DB) |
 
 ## Real-time (Socket.IO)
-Connect with `auth: { token }` (JWT). Subscribe:
-- `subscribe:kitchen` (KITCHEN/ADMIN) -> joins `role:KITCHEN`
-- `subscribe:table` (qrToken) (CUSTOMER/WAITER/ADMIN) -> joins `table:<qrToken>`
 
-Events emitted: `order:created`, `order:status`, `bill:requested`, `session:closed`,
-`assistance:requested`. Treat events as notifications; re-fetch state over REST.
+Connect with `auth: { token }`, where `token` is either a staff JWT or a customer session token.
+Rooms are assigned **server-side**; clients cannot name their own room:
+- Staff join `role:<ROLE>`.
+- Customers join `session:<sessionId>` (from their verified token).
+
+Events emitted (notifications — always re-fetch state over REST):
+`order.created`, `order.updated`, `order_item.status_changed`, `order_item.ready`,
+`order_item.served`, `bill.requested`, `session.closed`, `session.reopened`,
+`assistance_request.created`.
 
 ## Concurrency & idempotency
-- `POST /orders` requires a client-generated `idempotencyKey`. Retrying the same key returns
-  the same order and never creates a duplicate (DB unique constraint).
-- Two different keys on the same active table both succeed (serialized by row lock).
+- `POST /orders` requires a client-generated `idempotencyKey`; retrying the same key on the same
+  session returns the same order and never creates a duplicate (DB unique constraint), while reuse
+  for a different session is rejected (`409 IDEMPOTENCY_CONFLICT`).
+- Order/bill numbers come from Postgres sequences, so concurrent submissions cannot collide.
+- Item transitions take a `SELECT ... FOR UPDATE` row lock: two staff racing the same transition
+  yield exactly one success and one `409` (no duplicate events).
 - Session close and payment recording lock the target row to prevent races.

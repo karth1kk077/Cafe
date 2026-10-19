@@ -36,43 +36,76 @@ flowchart TD
   W <-->|Socket.IO (auth'd rooms)| API
   API -->|Prisma| DB[(PostgreSQL)]
   API --> S[Socket.IO server]
-  S -->|room: KITCHEN/WAITER/ADMIN/table| W
+  S -->|rooms: role:*/session:*| W
 ```
 
 ## Real-time architecture
-- Socket connections are authenticated with the same JWT as REST.
-- Staff join role rooms (`role:KITCHEN`, `role:WAITER`, `role:ADMIN`). Customers join only
-  their `table:<qrToken>` room via an authorized subscribe handler.
+- Socket connections are authenticated with `auth.token`, which may be either a staff JWT or a
+  customer **session token**. The server distinguishes them by payload shape: a staff token must
+  carry `id` + `role`; a customer token must carry `scope:"customer"` + `sessionId`.
+- Rooms are assigned **server-side** and clients cannot name their own room:
+  staff join `role:<ROLE>` (and `user:<id>`); customers join `session:<sessionId>` (and
+  `table:<tableId>`) derived from their verified token.
 - Events are **notifications, not source of truth**. State is persisted in PostgreSQL first;
   clients re-fetch over REST after any event and on reconnect.
-- Events: `order:created`, `order:status`, `bill:requested`, `session:closed`,
-  `assistance:requested`.
+- Events: `order.created`, `order.updated`, `order_item.status_changed`, `order_item.ready`,
+  `order_item.served`, `bill.requested`, `session.closed`, `session.reopened`,
+  `assistance_request.created`, `menu.updated`.
 - Scaling beyond one instance: swap the default in-memory Socket.IO adapter for the Redis
   adapter (`@socket.io/redis-adapter`) and put the API behind a load balancer with sticky
   sessions or Redis-backed pub/sub. Postgres remains the durable store.
 
 ## Critical business flow (order lifecycle)
 1. QR resolves a table by unpredictable `qrToken` — the QR is an identifier, not a credential.
+   When an orderable session exists the API mints a signed **session token**
+   (`{scope:"customer", sessionId, tableId}`) that the customer client stores and sends as
+   `x-session-token`.
 2. Customer browses menu; cart is client-side only and grants no authorization.
 3. On submit, the server (in a transaction):
-   - resolves the table by token,
-   - locks the open session row `FOR UPDATE`,
+   - verifies the session token and takes the **session id from the token** (never from the body),
+   - locks that session row `FOR UPDATE`,
    - rejects unless the session is `ACTIVE` (post-closure rule),
-   - replays idempotency key if present,
+   - replays idempotency key scoped to the session if present,
    - recomputes all prices/totals from the catalog (client prices ignored),
    - snapshots item names/prices/modifiers onto the order,
-   - writes the order + status history + idempotency record.
-4. Kitchen receives `order:created`, updates status through the allowed transition graph.
-5. Waiter generates an immutable bill snapshot, records payment, then closes the session.
-6. After closure the session can never accept orders again unless an admin reopens it (audited).
+   - creates each item in `QUEUED` and writes the order + status history + item events +
+     idempotency record.
+4. Kitchen receives `order.created` and moves **each line item** independently
+   `QUEUED → PREPARING → READY`; each accepted transition emits `order_item.status_changed`
+   (and `order_item.ready` at READY).
+5. Waiter collects ready dishes from the queue and marks each `READY → SERVED`
+   (`order_item.served`), then generates an immutable bill snapshot, records payment, then closes
+   the session.
+6. After closure the session can never accept orders again unless an admin reopens it (audited);
+   a stale tab holding the old session token is rejected with `409 SESSION_CLOSED`.
 
-## Order state machine
+## Order state machine (per line item + derived summary)
+Preparation is tracked per line item. The order's `status` is a **derived summary**, recomputed
+from its items on every transition and never written by a client.
+
 ```
-PENDING -> ACCEPTED -> PREPARING -> READY -> SERVED
-   |          |           |
-   +----------+-----------+--> CANCELLED
+Item:   QUEUED -> PREPARING -> READY -> SERVED
+           |          |          |
+           |          +----------+--> CANCELLED
+           +---------------------+
 ```
-Only these transitions are permitted; any other jump returns 409.
+- `QUEUED → CANCELLED`: KITCHEN / WAITER / ADMIN
+- `PREPARING → CANCELLED`: WAITER / ADMIN (supervisor authorization after prep starts)
+- `READY → CANCELLED`: ADMIN only
+- `QUEUED → PREPARING`, `PREPARING → READY`: KITCHEN / ADMIN
+- `READY → SERVED`: WAITER / ADMIN
+- `SERVED` and `CANCELLED` are terminal.
+
+Any other jump returns `409 INVALID_TRANSITION`; a role that may not perform the step gets `403`.
+
+```
+Summary: RECEIVED -> IN_PROGRESS -> PARTIALLY_READY -> READY -> COMPLETED
+                                                                    (or CANCELLED)
+```
+Derivation (cancelled items ignored): `COMPLETED` if every active item is `SERVED`; `READY` if
+every active item is `READY`/`SERVED`; `PARTIALLY_READY` if some active item is `READY`/`SERVED`;
+`IN_PROGRESS` if some item is `PREPARING`; otherwise `RECEIVED`. No active items left ⇒ `CANCELLED`.
+Implemented in `apps/api/src/lib/orderState.ts`.
 
 ## Session state machine
 ```
@@ -84,12 +117,21 @@ Ordering is permitted only in `ACTIVE`.
 
 ## Key technical risks & mitigations
 - **Concurrent submissions / retries**: DB transaction + `SELECT ... FOR UPDATE` on the session
-  + unique idempotency key. Verified by concurrent integration tests.
-- **Post-closure ordering**: enforced inside the transaction by checking `status === 'ACTIVE'`
-  after locking the row; a stale browser or saved QR cannot bypass it.
+  + unique idempotency key scoped to the session. Verified by concurrent integration tests.
+- **Post-closure / stale-QR ordering**: the order endpoint authorizes from the session token,
+  then locks that session row `FOR UPDATE` and re-checks `status === 'ACTIVE'`. A stale tab or
+  saved QR belonging to a closed session is rejected with `409 SESSION_CLOSED` and can never
+  reach a newer session at the same table.
+- **Conflicting item updates**: each item transition takes a `SELECT ... FOR UPDATE` lock and
+  validates against the central transition table, so two staff racing the same step yield one
+  success and one `409` with no duplicate events.
 - **Price tampering**: server recomputes totals from catalog; client totals are stripped by Zod.
-- **Financial accuracy**: integer minor units, server-side tax/rounding, immutable bill snapshots.
-- **IDOR / cross-table**: table resolved server-side from token; order endpoints never trust a
-  client table id; staff endpoints require role authorization.
+- **Financial accuracy**: integer minor units, server-side tax/rounding, immutable bill snapshots;
+  cancelled line items are excluded from bills.
+- **IDOR / cross-table**: the customer's session/table come from the verified token, not from the
+  request body; order and session reads are scoped to the token's session; staff endpoints require
+  role authorization.
+- **Ordering collisions**: order/bill numbers come from Postgres sequences, so concurrent inserts
+  cannot produce duplicates.
 - **Real-time reliability**: persist-then-notify; reconnect re-syncs from REST.
 ```

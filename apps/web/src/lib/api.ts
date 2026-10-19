@@ -1,10 +1,22 @@
 const BASE = "/api";
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+interface RequestOptions extends RequestInit {
+  /** Session-scoped customer token, sent as `x-session-token`. */
+  sessionToken?: string | null;
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { sessionToken, ...init } = options;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...((init.headers as Record<string, string>) || {}),
+  };
+  if (sessionToken) headers["x-session-token"] = sessionToken;
+
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
+    ...init,
+    headers,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -18,12 +30,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
-  patch: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }),
+  get: <T>(path: string, sessionToken?: string | null) => request<T>(path, { sessionToken }),
+  post: <T>(path: string, body?: unknown, sessionToken?: string | null) =>
+    request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined, sessionToken }),
+  patch: <T>(path: string, body?: unknown, sessionToken?: string | null) =>
+    request<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined, sessionToken }),
 };
+
+export type OrderItemStatus = "QUEUED" | "PREPARING" | "READY" | "SERVED" | "CANCELLED";
+export type OrderStatus =
+  | "RECEIVED"
+  | "IN_PROGRESS"
+  | "PARTIALLY_READY"
+  | "READY"
+  | "COMPLETED"
+  | "CANCELLED";
 
 export interface PublicMenuResponse {
   categories: Array<{
@@ -48,24 +69,31 @@ export interface TableResponse {
   table: { id: string; number: string; status: string };
   session: { id: string; status: string; openedAt: string } | null;
   canOrder: boolean;
+  /** Present only when the table has an orderable session. */
+  sessionToken: string | null;
+}
+
+export interface OrderItemResponse {
+  id: string;
+  nameSnapshot: string;
+  quantity: number;
+  unitPriceMinor: number;
+  lineTotalMinor: number;
+  status: OrderItemStatus;
+  specialInstructions?: string | null;
+  readyAt?: string | null;
+  servedAt?: string | null;
+  addons: Array<{ nameSnapshot: string; priceSnapshotMinor: number }>;
 }
 
 export interface OrderResponse {
   order: {
     id: string;
     orderNumber: string;
-    status: string;
+    status: OrderStatus;
     totalMinor: number;
     createdAt: string;
-    items: Array<{
-      id: string;
-      nameSnapshot: string;
-      quantity: number;
-      unitPriceMinor: number;
-      lineTotalMinor: number;
-      specialInstructions?: string;
-      addons: Array<{ nameSnapshot: string; priceSnapshotMinor: number }>;
-    }>;
+    items: OrderItemResponse[];
   };
 }
 
@@ -74,10 +102,16 @@ export interface SessionOrdersResponse {
   orders: Array<{
     id: string;
     orderNumber: string;
-    status: string;
+    status: OrderStatus;
     totalMinor: number;
     createdAt: string;
-    items: Array<{ id: string; nameSnapshot: string; quantity: number; lineTotalMinor: number }>;
+    items: Array<{
+      id: string;
+      nameSnapshot: string;
+      quantity: number;
+      lineTotalMinor: number;
+      status: OrderItemStatus;
+    }>;
   }>;
 }
 

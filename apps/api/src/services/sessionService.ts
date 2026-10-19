@@ -84,7 +84,7 @@ export async function closeSession(sessionId: string, actor: Actor, reason?: str
     }
 
     const activeOrders = await tx.order.count({
-      where: { sessionId, status: { in: ["PENDING", "ACCEPTED", "PREPARING", "READY"] } },
+      where: { sessionId, status: { in: ["RECEIVED", "IN_PROGRESS", "PARTIALLY_READY", "READY"] } },
     });
     if (activeOrders > 0) {
       throw new ConflictError(

@@ -13,6 +13,13 @@
 - [x] Hiding a button is never the enforcement point.
 - [x] Customers cannot open/close/reopen sessions or access staff endpoints.
 - [x] Reopen is ADMIN-only and written to the audit log.
+- [x] Customer ordering uses a signed **session-scoped token** (`{scope:"customer", sessionId,
+      tableId}`) sent as `x-session-token`; the server takes the session/table from the token, so a
+      client cannot order into an arbitrary session or reach another table.
+- [x] Per-item transitions are role-gated and legality-checked against a central transition table;
+      post-prep cancellation requires supervisor (WAITER/ADMIN) and `READY` cancellation ADMIN.
+- [x] Socket rooms are assigned server-side; a staff token must carry `id`+`role` and a customer
+      token must carry `scope:"customer"`+`sessionId` (a customer token is never accepted as staff).
 
 ## Input validation & data access
 - [x] Zod validation on every request body (orders, login, payments, admin writes).
@@ -41,6 +48,10 @@
 - [x] QR `qrToken` is 64-char unpredictable hex; identifies a table, not an authorization.
 - [x] Table resolved server-side; clients cannot supply an arbitrary table id to order.
 - [x] Orders bound to their session/table; cross-table access rejected.
+- [x] A token for a **closed** session is rejected with `409 SESSION_CLOSED`, so a stale QR page
+      cannot order into the next session at the same table.
+- [x] Admin can rotate a table's QR token (`PATCH /staff/tables/:tableId {rotateQr:true}`) to
+      invalidate a leaked print.
 
 ## Deployment hardening (production)
 - [ ] Set `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=none` (if cross-site), strong `JWT_SECRET`/`SESSION_SECRET`.

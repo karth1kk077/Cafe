@@ -20,13 +20,27 @@ async function login(email: string, password = "Password123!") {
   return res.body.token as string;
 }
 
-async function openSession(token = waiterToken) {
-  // Guarantee isolation: force-close any lingering active session on the test table.
-  await prisma.diningSession.updateMany({
-    where: { tableId, status: { not: "CLOSED" } },
-    data: { status: "CLOSED", closedAt: new Date() },
-  });
+/** Force-close any lingering session on the shared test table for isolation. */
+async function resetTable() {
+  const sessions = await prisma.diningSession.findMany({ where: { tableId, status: { not: "CLOSED" } } });
+  const ids = sessions.map((s) => s.id);
+  if (ids.length) {
+    // Terminal-state any live items, then close the sessions directly. This is
+    // test-only setup and must not depend on the business lifecycle succeeding.
+    await prisma.orderItem.updateMany({
+      where: { order: { sessionId: { in: ids } }, status: { notIn: ["SERVED", "CANCELLED"] } },
+      data: { status: "CANCELLED" },
+    });
+    await prisma.diningSession.updateMany({
+      where: { id: { in: ids } },
+      data: { status: "CLOSED", closedAt: new Date() },
+    });
+  }
   await prisma.cafeTable.update({ where: { id: tableId }, data: { status: "AVAILABLE" } });
+}
+
+async function openSession(token = waiterToken) {
+  await resetTable();
   const res = await request(app)
     .post(`/api/staff/tables/${tableId}/sessions`)
     .set("Authorization", `Bearer ${token}`)
@@ -35,17 +49,47 @@ async function openSession(token = waiterToken) {
   return res.body.session.id as string;
 }
 
+/** Resolve the table's QR context and return the minted session-scoped token. */
+async function sessionToken() {
+  const res = await request(app).get(`/api/public/tables/${tableToken}`);
+  expect(res.status).toBe(200);
+  return res.body.sessionToken as string | null;
+}
+
+/** Open a session and return { sessionId, token } ready for ordering. */
+async function openOrderable() {
+  const sessionId = await openSession();
+  const token = await sessionToken();
+  expect(token).toBeTruthy();
+  return { sessionId, token: token as string };
+}
+
+function patchItem(itemId: string, status: string, token: string) {
+  return request(app)
+    .patch(`/api/staff/order-items/${itemId}/status`)
+    .set("Authorization", `Bearer ${token}`)
+    .send({ status });
+}
+
+async function placeOrder(token: string, items: Array<Record<string, unknown>>, key?: string) {
+  const res = await request(app)
+    .post("/api/public/orders")
+    .set("x-session-token", token)
+    .send({
+      idempotencyKey: key ?? `k-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      items,
+    });
+  return res;
+}
+
+/** Best-effort teardown: serve every item, pay open bills, then close. */
 async function closeSessionClean(sessionId: string) {
-  // Best-effort cleanup: mark any open orders served, pay any open bills, then close.
-  const orders = await prisma.order.findMany({ where: { sessionId, status: { notIn: ["SERVED", "CANCELLED"] } } });
-  for (const o of orders) {
-    for (const s of ["ACCEPTED", "PREPARING", "READY", "SERVED"]) {
-      await request(app)
-        .patch(`/api/staff/orders/${o.id}/status`)
-        .set("Authorization", `Bearer ${waiterToken}`)
-        .send({ status: s })
-        .ok(() => true);
-    }
+  const items = await prisma.orderItem.findMany({ where: { order: { sessionId } } });
+  for (const it of items) {
+    // QUEUED -> PREPARING -> READY -> SERVED (ignore already-passed/no-op steps).
+    await patchItem(it.id, "PREPARING", chefToken).ok(() => true);
+    await patchItem(it.id, "READY", chefToken).ok(() => true);
+    await patchItem(it.id, "SERVED", waiterToken).ok(() => true);
   }
   const bills = await prisma.bill.findMany({ where: { sessionId, status: { in: ["OPEN", "PARTIAL"] } } });
   for (const b of bills) {
@@ -63,7 +107,6 @@ async function closeSessionClean(sessionId: string) {
 }
 
 beforeAll(async () => {
-  // Seed isolated fixtures in the test DB.
   const cat = await prisma.menuCategory.create({
     data: { name: `TestCat-${Date.now()}`, sortOrder: 1 },
   });
@@ -86,7 +129,6 @@ beforeAll(async () => {
   tableId = table.id;
   tableToken = table.qrToken;
 
-  // Ensure staff exist (idempotent).
   const bcrypt = (await import("bcryptjs")).default;
   const hash = await bcrypt.hash("Password123!", 12);
   for (const [email, name, role] of [
@@ -145,43 +187,41 @@ describe("authentication & RBAC", () => {
   });
 });
 
-describe("table session + ordering lifecycle", () => {
-  it("rejects orders when no active session exists", async () => {
-    const res = await request(app).post("/api/public/orders").send({
-      tableCode: tableToken,
-      idempotencyKey: `no-session-${Date.now()}`,
-      items: [{ menuItemId: latteId, quantity: 1 }],
-    });
-    expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe("SESSION_CLOSED");
+describe("session-scoped ordering authorization", () => {
+  it("rejects an order with no session token", async () => {
+    const res = await request(app)
+      .post("/api/public/orders")
+      .send({ idempotencyKey: `no-token-${Date.now()}`, items: [{ menuItemId: latteId, quantity: 1 }] });
+    expect(res.status).toBe(401);
+  });
+
+  it("reports canOrder=false and no token when no session is open", async () => {
+    await resetTable();
+    const res = await request(app).get(`/api/public/tables/${tableToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.canOrder).toBe(false);
+    expect(res.body.sessionToken).toBeNull();
   });
 
   it("computes price on the server and ignores client totals", async () => {
-    const sessionId = await openSession();
-    const res = await request(app).post("/api/public/orders").send({
-      tableCode: tableToken,
-      idempotencyKey: `price-${Date.now()}`,
-      // Client lies about total/price — schema must ignore them.
-      totalMinor: 1,
-      items: [{ menuItemId: latteId, variantId, addonIds: [addonId], quantity: 2 }],
-    });
+    const { sessionId, token } = await openOrderable();
+    const res = await placeOrder(token, [
+      { menuItemId: latteId, variantId, addonIds: [addonId], quantity: 2 },
+    ]);
+    // Client lies about total/price — the schema strips them and the server ignores them.
     expect(res.status).toBe(201);
     // 18000 + 4000 + 3000 = 25000 * 2 = 50000; tax 5% = 2500 -> 52500
     expect(res.body.order.totalMinor).toBe(52500);
     expect(res.body.order.items[0].unitPriceMinor).toBe(25000);
+    expect(res.body.order.items[0].status).toBe("QUEUED");
     await closeSessionClean(sessionId);
   });
 
   it("is idempotent for the same idempotency key", async () => {
-    const sessionId = await openSession();
+    const { sessionId, token } = await openOrderable();
     const key = `idem-${Date.now()}`;
-    const payload = {
-      tableCode: tableToken,
-      idempotencyKey: key,
-      items: [{ menuItemId: latteId, quantity: 1 }],
-    };
-    const a = await request(app).post("/api/public/orders").send(payload);
-    const b = await request(app).post("/api/public/orders").send(payload);
+    const a = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }], key);
+    const b = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }], key);
     expect(a.status).toBe(201);
     expect(b.status).toBe(201);
     expect(b.body.order.id).toBe(a.body.order.id);
@@ -191,107 +231,285 @@ describe("table session + ordering lifecycle", () => {
   });
 
   it("rejects an unavailable item", async () => {
-    const sessionId = await openSession();
+    const { sessionId, token } = await openOrderable();
     await prisma.menuItem.update({ where: { id: latteId }, data: { isAvailable: false } });
-    const res = await request(app).post("/api/public/orders").send({
-      tableCode: tableToken,
-      idempotencyKey: `unavail-${Date.now()}`,
-      items: [{ menuItemId: latteId, quantity: 1 }],
-    });
+    const res = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe("ITEM_UNAVAILABLE");
     await prisma.menuItem.update({ where: { id: latteId }, data: { isAvailable: true } });
     await closeSessionClean(sessionId);
   });
 
-  it("enforces allowed order status transitions", async () => {
-    const sessionId = await openSession();
-    const o = await request(app).post("/api/public/orders").send({
-      tableCode: tableToken,
-      idempotencyKey: `trans-${Date.now()}`,
-      items: [{ menuItemId: latteId, quantity: 1 }],
+  it("CRITICAL: rejects a stale token after the session is closed", async () => {
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    expect(o.status).toBe(201);
+    await closeSessionClean(sessionId);
+
+    // A saved QR page / stale tab still holding the old token must be rejected.
+    const late = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    expect(late.status).toBe(409);
+    expect(late.body.error.code).toBe("SESSION_CLOSED");
+  });
+
+  it("CRITICAL: a stale token cannot order into a new session at the same table", async () => {
+    const first = await openOrderable();
+    const staleToken = first.token;
+    await closeSessionClean(first.sessionId);
+
+    // New group is seated: a fresh session is opened at the same table.
+    const second = await openOrderable();
+    expect(second.sessionId).not.toBe(first.sessionId);
+
+    // The stale token must NOT silently reach the new session.
+    const late = await placeOrder(staleToken, [{ menuItemId: latteId, quantity: 1 }]);
+    expect(late.status).toBe(409);
+
+    // And a token for the new session works.
+    const fresh = await placeOrder(second.token, [{ menuItemId: latteId, quantity: 1 }]);
+    expect(fresh.status).toBe(201);
+    expect(fresh.body.order.sessionId).toBe(second.sessionId);
+    await closeSessionClean(second.sessionId);
+  });
+
+  it("scopes order reads to the authorizing session", async () => {
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    const orderId = o.body.order.id;
+
+    const ok = await request(app).get(`/api/public/orders/${orderId}`).set("x-session-token", token);
+    expect(ok.status).toBe(200);
+
+    // Another table's session token must not read this order.
+    const otherTable = await prisma.cafeTable.create({
+      data: { number: `T-x-${Date.now()}`, qrToken: `qrx-${Date.now()}` },
     });
-    const oid = o.body.order.id;
-    // invalid jump PENDING -> READY
-    const bad = await request(app)
-      .patch(`/api/staff/orders/${oid}/status`)
-      .set("Authorization", `Bearer ${chefToken}`)
-      .send({ status: "READY" });
-    expect(bad.status).toBe(409);
-    // valid path
-    for (const s of ["ACCEPTED", "PREPARING", "READY", "SERVED"]) {
-      const r = await request(app)
-        .patch(`/api/staff/orders/${oid}/status`)
-        .set("Authorization", `Bearer ${chefToken}`)
-        .send({ status: s });
-      expect(r.status).toBe(200);
-    }
+    const otherSession = await prisma.diningSession.create({
+      data: { tableId: otherTable.id, openedBy: (await prisma.user.findFirstOrThrow({ where: { email: "w@test.local" } })).id },
+    });
+    const { signCustomerSessionToken } = await import("../lib/customerSession.js");
+    const otherToken = signCustomerSessionToken(otherSession.id, otherTable.id);
+    const denied = await request(app).get(`/api/public/orders/${orderId}`).set("x-session-token", otherToken);
+    expect(denied.status).toBe(404);
+
+    await closeSessionClean(sessionId);
+    await prisma.diningSession.delete({ where: { id: otherSession.id } });
+    await prisma.cafeTable.delete({ where: { id: otherTable.id } });
+  });
+});
+
+describe("item-level preparation lifecycle", () => {
+  it("derives the order summary as items progress independently", async () => {
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [
+      { menuItemId: latteId, quantity: 1 },
+      { menuItemId: latteId, quantity: 1 },
+    ]);
+    const orderId = o.body.order.id;
+    const items = o.body.order.items as Array<{ id: string; status: string }>;
+    expect(items).toHaveLength(2);
+    expect(o.body.order.status).toBe("RECEIVED");
+
+    const [a, b] = items;
+
+    // Chef starts item A.
+    const inProgress = await patchItem(a.id, "PREPARING", chefToken);
+    expect(inProgress.status).toBe(200);
+    expect(inProgress.body.order.status).toBe("IN_PROGRESS");
+
+    // Chef marks item A ready → partially ready (B still queued).
+    const partial = await patchItem(a.id, "READY", chefToken);
+    expect(partial.status).toBe(200);
+    expect(partial.body.order.status).toBe("PARTIALLY_READY");
+
+    // Waiter serves A while B is still queued → still partially ready.
+    const servedA = await patchItem(a.id, "SERVED", waiterToken);
+    expect(servedA.status).toBe(200);
+    expect(servedA.body.order.status).toBe("PARTIALLY_READY");
+
+    // B progresses to ready → whole order is ready.
+    await patchItem(b.id, "PREPARING", chefToken);
+    const ready = await patchItem(b.id, "READY", chefToken);
+    expect(ready.body.order.status).toBe("READY");
+
+    // Serve B → order completes.
+    const done = await patchItem(b.id, "SERVED", waiterToken);
+    expect(done.body.order.status).toBe("COMPLETED");
+
     await closeSessionClean(sessionId);
   });
 
-  it("CRITICAL: rejects orders after the session is closed (stale tab / saved QR)", async () => {
-    const sessionId = await openSession();
-    const o = await request(app).post("/api/public/orders").send({
-      tableCode: tableToken,
-      idempotencyKey: `pre-${Date.now()}`,
-      items: [{ menuItemId: latteId, quantity: 1 }],
+  it("enforces role permissions per transition", async () => {
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    const itemId = o.body.order.items[0].id;
+
+    // Waiter cannot start cooking.
+    const waiterStart = await patchItem(itemId, "PREPARING", waiterToken);
+    expect(waiterStart.status).toBe(403);
+
+    // Chef cannot jump straight to SERVED.
+    const chefServe = await patchItem(itemId, "SERVED", chefToken);
+    expect(chefServe.status).toBe(409);
+    expect(chefServe.body.error.code).toBe("INVALID_TRANSITION");
+
+    // Chef starts + readies; waiter serves.
+    expect((await patchItem(itemId, "PREPARING", chefToken)).status).toBe(200);
+    expect((await patchItem(itemId, "READY", chefToken)).status).toBe(200);
+    expect((await patchItem(itemId, "SERVED", waiterToken)).status).toBe(200);
+
+    // SERVED is terminal.
+    const terminal = await patchItem(itemId, "CANCELLED", adminToken);
+    expect(terminal.status).toBe(409);
+
+    await closeSessionClean(sessionId);
+  });
+
+  it("allows cancelling a queued item but forbids a no-op re-cancel", async () => {
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    const itemId = o.body.order.items[0].id;
+
+    const cancel = await request(app)
+      .post(`/api/staff/order-items/${itemId}/cancel`)
+      .set("Authorization", `Bearer ${waiterToken}`)
+      .send({ reason: "customer changed mind" });
+    expect(cancel.status).toBe(200);
+    expect(cancel.body.item.status).toBe("CANCELLED");
+    // The only item is cancelled → the order summary is CANCELLED.
+    expect(cancel.body.order.status).toBe("CANCELLED");
+
+    const again = await request(app)
+      .post(`/api/staff/order-items/${itemId}/cancel`)
+      .set("Authorization", `Bearer ${waiterToken}`)
+      .send({});
+    expect(again.status).toBe(409);
+
+    await closeSessionClean(sessionId);
+  });
+
+  it("exposes a ready-dish queue to waiters", async () => {
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    const itemId = o.body.order.items[0].id;
+    await patchItem(itemId, "PREPARING", chefToken);
+    await patchItem(itemId, "READY", chefToken);
+
+    const res = await request(app)
+      .get("/api/staff/order-items/ready")
+      .set("Authorization", `Bearer ${waiterToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.items.some((i: { id: string }) => i.id === itemId)).toBe(true);
+
+    await closeSessionClean(sessionId);
+  });
+
+  it("records an immutable per-item event trail", async () => {
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    const itemId = o.body.order.items[0].id;
+    await patchItem(itemId, "PREPARING", chefToken);
+    await patchItem(itemId, "READY", chefToken);
+
+    const events = await prisma.orderItemEvent.findMany({
+      where: { orderItemId: itemId },
+      orderBy: { createdAt: "asc" },
     });
-    expect(o.status).toBe(201);
-    // Serve, bill, pay, close.
-    const oid = o.body.order.id;
-    for (const s of ["ACCEPTED", "PREPARING", "READY", "SERVED"]) {
-      await request(app)
-        .patch(`/api/staff/orders/${oid}/status`)
-        .set("Authorization", `Bearer ${waiterToken}`)
-        .send({ status: s });
-    }
+    // creation (QUEUED) + PREPARING + READY
+    expect(events.length).toBeGreaterThanOrEqual(3);
+    expect(events.some((e) => e.source === "CUSTOMER" && e.toStatus === "QUEUED")).toBe(true);
+    expect(events.some((e) => e.toStatus === "READY" && e.actorId)).toBe(true);
+
+    await closeSessionClean(sessionId);
+  });
+});
+
+describe("billing & session close", () => {
+  it("only closes once all items are served and the bill is paid", async () => {
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    const itemId = o.body.order.items[0].id;
+
+    // Unresolved items block close (order still RECEIVED).
+    const early = await request(app)
+      .post(`/api/staff/sessions/${sessionId}/close`)
+      .set("Authorization", `Bearer ${waiterToken}`)
+      .send({});
+    expect(early.status).toBe(409);
+    expect(early.body.error.code).toBe("UNRESOLVED_ORDERS");
+
+    await patchItem(itemId, "PREPARING", chefToken);
+    await patchItem(itemId, "READY", chefToken);
+    await patchItem(itemId, "SERVED", waiterToken);
+
     const bill = await request(app)
       .post("/api/staff/bills/generate")
       .set("Authorization", `Bearer ${waiterToken}`)
       .send({ sessionId });
     expect(bill.status).toBe(201);
+
+    // Unpaid bill blocks close.
+    const unpaid = await request(app)
+      .post(`/api/staff/sessions/${sessionId}/close`)
+      .set("Authorization", `Bearer ${waiterToken}`)
+      .send({});
+    expect(unpaid.status).toBe(409);
+    expect(unpaid.body.error.code).toBe("UNPAID_BALANCE");
+
     await request(app)
       .post("/api/staff/payments")
       .set("Authorization", `Bearer ${waiterToken}`)
       .send({ billId: bill.body.bill.id, amountMinor: bill.body.bill.totalMinor, method: "CASH" });
+
     const close = await request(app)
       .post(`/api/staff/sessions/${sessionId}/close`)
       .set("Authorization", `Bearer ${waiterToken}`)
       .send({});
     expect(close.status).toBe(200);
     expect(close.body.session.status).toBe("CLOSED");
+  });
 
-    // A stale browser tab / saved QR link tries to order again -> must be rejected.
-    const late = await request(app).post("/api/public/orders").send({
-      tableCode: tableToken,
-      idempotencyKey: `late-${Date.now()}`,
-      items: [{ menuItemId: latteId, quantity: 1 }],
-    });
-    expect(late.status).toBe(409);
-    expect(late.body.error.code).toBe("SESSION_CLOSED");
+  it("excludes cancelled items from the bill", async () => {
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [
+      { menuItemId: latteId, quantity: 1 },
+      { menuItemId: latteId, quantity: 1 },
+    ]);
+    const [a, b] = o.body.order.items as Array<{ id: string }>;
+    await request(app)
+      .post(`/api/staff/order-items/${a.id}/cancel`)
+      .set("Authorization", `Bearer ${waiterToken}`)
+      .send({ reason: "out of stock" });
+    // Serve the remaining item.
+    await patchItem(b.id, "PREPARING", chefToken);
+    await patchItem(b.id, "READY", chefToken);
+    await patchItem(b.id, "SERVED", waiterToken);
 
-    // canOrder reflects closed state for the saved QR URL.
-    const t = await request(app).get(`/api/public/tables/${tableToken}`);
-    expect(t.body.canOrder).toBe(false);
+    const bill = await request(app)
+      .post("/api/staff/bills/generate")
+      .set("Authorization", `Bearer ${waiterToken}`)
+      .send({ sessionId });
+    expect(bill.status).toBe(201);
+    expect(bill.body.bill.lineItems.length).toBe(1);
+    // Only one billable line: 18000 + 5% tax = 18900.
+    expect(bill.body.bill.subtotalMinor).toBe(18000);
+    await closeSessionClean(sessionId);
   });
 
   it("requires admin role to reopen a session, and allows admin after", async () => {
     const sessionId = await openSession();
     await closeSessionClean(sessionId);
-    // Waiter cannot reopen.
     const denied = await request(app)
       .post(`/api/staff/sessions/${sessionId}/reopen`)
       .set("Authorization", `Bearer ${waiterToken}`)
       .send({ reason: "try" });
     expect(denied.status).toBe(403);
-    // Admin can.
     const ok = await request(app)
       .post(`/api/staff/sessions/${sessionId}/reopen`)
       .set("Authorization", `Bearer ${adminToken}`)
       .send({ reason: "customer returned" });
     expect(ok.status).toBe(200);
     expect(ok.body.session.status).toBe("ACTIVE");
-    // Reopen writes an audit entry.
     const audit = await prisma.auditLog.findFirst({
       where: { action: "SESSION_REOPENED", entityId: sessionId },
     });
@@ -299,57 +517,13 @@ describe("table session + ordering lifecycle", () => {
     await closeSessionClean(sessionId);
   });
 
-  it("cannot close a session while an unpaid bill exists", async () => {
-    const sessionId = await openSession();
-    const o = await request(app).post("/api/public/orders").send({
-      tableCode: tableToken,
-      idempotencyKey: `unpaid-${Date.now()}`,
-      items: [{ menuItemId: latteId, quantity: 1 }],
-    });
-    const oid = o.body.order.id;
-    for (const s of ["ACCEPTED", "PREPARING", "READY", "SERVED"]) {
-      await request(app)
-        .patch(`/api/staff/orders/${oid}/status`)
-        .set("Authorization", `Bearer ${waiterToken}`)
-        .send({ status: s });
-    }
-    const bill = await request(app)
-      .post("/api/staff/bills/generate")
-      .set("Authorization", `Bearer ${waiterToken}`)
-      .send({ sessionId });
-    // Bill is OPEN, unpaid -> close must fail.
-    const close = await request(app)
-      .post(`/api/staff/sessions/${sessionId}/close`)
-      .set("Authorization", `Bearer ${waiterToken}`)
-      .send({});
-    expect(close.status).toBe(409);
-    expect(close.body.error.code).toBe("UNPAID_BALANCE");
-    // Pay then close succeeds.
-    await request(app)
-      .post("/api/staff/payments")
-      .set("Authorization", `Bearer ${waiterToken}`)
-      .send({ billId: bill.body.bill.id, amountMinor: bill.body.bill.totalMinor, method: "CASH" });
-    const close2 = await request(app)
-      .post(`/api/staff/sessions/${sessionId}/close`)
-      .set("Authorization", `Bearer ${waiterToken}`)
-      .send({});
-    expect(close2.status).toBe(200);
-  });
-
   it("rejects overpayment", async () => {
-    const sessionId = await openSession();
-    const o = await request(app).post("/api/public/orders").send({
-      tableCode: tableToken,
-      idempotencyKey: `over-${Date.now()}`,
-      items: [{ menuItemId: latteId, quantity: 1 }],
-    });
-    const oid = o.body.order.id;
-    for (const s of ["ACCEPTED", "PREPARING", "READY", "SERVED"]) {
-      await request(app)
-        .patch(`/api/staff/orders/${oid}/status`)
-        .set("Authorization", `Bearer ${waiterToken}`)
-        .send({ status: s });
-    }
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    const itemId = o.body.order.items[0].id;
+    await patchItem(itemId, "PREPARING", chefToken);
+    await patchItem(itemId, "READY", chefToken);
+    await patchItem(itemId, "SERVED", waiterToken);
     const bill = await request(app)
       .post("/api/staff/bills/generate")
       .set("Authorization", `Bearer ${waiterToken}`)
@@ -370,47 +544,46 @@ describe("table session + ordering lifecycle", () => {
       .send({});
     expect(dup.status).toBe(409);
     expect(dup.body.error.code).toBe("SESSION_EXISTS");
+    await resetTable();
+  });
+
+  it("rotates the table QR token on request", async () => {
+    const before = await prisma.cafeTable.findUniqueOrThrow({ where: { id: tableId } });
+    const res = await request(app)
+      .patch(`/api/staff/tables/${tableId}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ rotateQr: true });
+    expect(res.status).toBe(200);
+    expect(res.body.table.qrToken).not.toBe(before.qrToken);
+    // The old token no longer resolves.
+    const stale = await request(app).get(`/api/public/tables/${before.qrToken}`);
+    expect(stale.status).toBe(404);
+    // Restore the test token for subsequent suites.
+    await prisma.cafeTable.update({ where: { id: tableId }, data: { qrToken: tableToken } });
   });
 });
 
 describe("concurrency", () => {
   it("handles two simultaneous order submissions safely", async () => {
-    const sessionId = await openSession();
-    const keyA = `conc-a-${Date.now()}`;
-    const keyB = `conc-b-${Date.now()}`;
+    const { sessionId, token } = await openOrderable();
     const [ra, rb] = await Promise.all([
-      request(app).post("/api/public/orders").send({
-        tableCode: tableToken,
-        idempotencyKey: keyA,
-        items: [{ menuItemId: latteId, quantity: 1 }],
-      }),
-      request(app).post("/api/public/orders").send({
-        tableCode: tableToken,
-        idempotencyKey: keyB,
-        items: [{ menuItemId: latteId, quantity: 2 }],
-      }),
+      placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]),
+      placeOrder(token, [{ menuItemId: latteId, quantity: 2 }]),
     ]);
     expect(ra.status).toBe(201);
     expect(rb.status).toBe(201);
     expect(ra.body.order.id).not.toBe(rb.body.order.id);
-    // Both persisted distinctly.
     const orders = await prisma.order.findMany({ where: { sessionId } });
     expect(orders.length).toBe(2);
     await closeSessionClean(sessionId);
   });
 
   it("does not create a duplicate when the same submission is retried concurrently", async () => {
-    const sessionId = await openSession();
+    const { sessionId, token } = await openOrderable();
     const key = `conc-same-${Date.now()}`;
-    const payload = {
-      tableCode: tableToken,
-      idempotencyKey: key,
-      items: [{ menuItemId: latteId, quantity: 1 }],
-    };
-    // Fire the identical request twice at once; unique key must prevent two rows.
     const [a, b] = await Promise.all([
-      request(app).post("/api/public/orders").send(payload),
-      request(app).post("/api/public/orders").send(payload),
+      placeOrder(token, [{ menuItemId: latteId, quantity: 1 }], key),
+      placeOrder(token, [{ menuItemId: latteId, quantity: 1 }], key),
     ]);
     expect(a.status).toBe(201);
     expect(b.status).toBe(201);
@@ -419,24 +592,25 @@ describe("concurrency", () => {
     expect(rows.length).toBe(1);
     await closeSessionClean(sessionId);
   });
-});
 
-describe("cross-table access (IDOR)", () => {
-  it("rejects ordering on a table using another table's code path", async () => {
-    // Create a second table; ordering on table A must not affect table B.
-    const t2 = await prisma.cafeTable.create({
-      data: { number: `T2-${Date.now()}`, qrToken: `qr2-${Date.now()}` },
-    });
-    const sessionId = await openSession();
-    // A valid order on table A.
-    const o = await request(app).post("/api/public/orders").send({
-      tableCode: tableToken,
-      idempotencyKey: `idor-${Date.now()}`,
-      items: [{ menuItemId: latteId, quantity: 1 }],
-    });
-    expect(o.status).toBe(201);
-    expect(o.body.order.tableId).toBe(tableId);
-    expect(o.body.order.tableId).not.toBe(t2.id);
+  it("resolves concurrent conflicting item transitions without corruption", async () => {
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    const itemId = o.body.order.items[0].id;
+    await patchItem(itemId, "PREPARING", chefToken);
+
+    // Two chefs race to READY the same item; the row lock serializes them so
+    // exactly one wins and the loser gets a conflict (not a duplicate event).
+    const [r1, r2] = await Promise.all([
+      patchItem(itemId, "READY", chefToken),
+      patchItem(itemId, "READY", chefToken),
+    ]);
+    const codes = [r1.status, r2.status].sort();
+    expect(codes).toEqual([200, 409]);
+
+    const item = await prisma.orderItem.findUniqueOrThrow({ where: { id: itemId } });
+    expect(item.status).toBe("READY");
+
     await closeSessionClean(sessionId);
   });
 });

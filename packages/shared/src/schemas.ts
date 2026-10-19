@@ -2,7 +2,15 @@ import { z } from "zod";
 
 export const RoleSchema = z.enum(["CUSTOMER", "WAITER", "KITCHEN", "ADMIN"]);
 export const SessionStatusSchema = z.enum(["ACTIVE", "BILL_REQUESTED", "PAYMENT_PENDING", "CLOSED"]);
-export const OrderStatusSchema = z.enum(["PENDING", "ACCEPTED", "PREPARING", "READY", "SERVED", "CANCELLED"]);
+export const OrderStatusSchema = z.enum([
+  "RECEIVED",
+  "IN_PROGRESS",
+  "PARTIALLY_READY",
+  "READY",
+  "COMPLETED",
+  "CANCELLED",
+]);
+export const OrderItemStatusSchema = z.enum(["QUEUED", "PREPARING", "READY", "SERVED", "CANCELLED"]);
 export const TableStatusSchema = z.enum(["AVAILABLE", "OCCUPIED", "BILL_REQUESTED", "PAYMENT_PENDING", "CLOSED"]);
 
 export const IdSchema = z.string().uuid();
@@ -21,7 +29,8 @@ export const OrderItemInputSchema = z.object({
 });
 
 export const CreateOrderSchema = z.object({
-  tableCode: z.string().min(8).max(64),
+  // The dining session is derived from the customer's session token, never
+  // from a client-supplied table code (spec 1, 6.1).
   items: z.array(OrderItemInputSchema).min(1).max(50),
   idempotencyKey: z.string().min(8).max(200),
 });
@@ -48,4 +57,14 @@ export const PaymentRecordSchema = z.object({
   amountMinor: z.number().int().positive(),
   method: z.enum(["CASH", "OTHER"]),
   reference: z.string().max(100).optional(),
+});
+
+// Staff action on a single order line item (spec 7.2).
+export const UpdateOrderItemStatusSchema = z.object({
+  status: OrderItemStatusSchema,
+  note: z.string().max(200).optional(),
+});
+
+export const CancelOrderItemSchema = z.object({
+  reason: z.string().max(200).optional(),
 });

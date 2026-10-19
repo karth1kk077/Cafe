@@ -4,8 +4,8 @@ import { sumMinor } from "../lib/money.js";
 import { getSettings } from "./menuService.js";
 
 async function generateBillNumber(tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) {
-  const count = await tx.bill.count();
-  const seq = String(count + 1).padStart(6, "0");
+  const rows = await tx.$queryRaw<Array<{ seq: bigint }>>`SELECT nextval('cafe_bill_number_seq') AS seq`;
+  const seq = String(rows[0]?.seq ?? 0).padStart(6, "0");
   return `BILL-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${seq}`;
 }
 
@@ -44,6 +44,8 @@ export async function generateBill(sessionId: string, actor: { id: string }) {
 
     for (const order of session.orders) {
       for (const item of order.items) {
+        // Cancelled line items are never billed.
+        if (item.status === "CANCELLED") continue;
         subtotal += item.lineTotalMinor;
         lines.push({
           orderId: order.id,

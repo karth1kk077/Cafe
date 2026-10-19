@@ -1,100 +1,152 @@
 import { Server as HttpServer } from "http";
 import { Server as SocketServer, type Socket } from "socket.io";
-import { verifyToken } from "../middleware/auth.js";
+import { verifyToken, type AuthUser } from "../middleware/auth.js";
+import { verifyCustomerSessionToken, type CustomerSessionClaim } from "../lib/customerSession.js";
 import { config } from "../config/index.js";
 import { logger } from "../lib/logger.js";
 
 let io: SocketServer | null = null;
 
+// Application event contracts (spec 13).
 export const SOCKET_EVENTS = {
-  ORDER_CREATED: "order:created",
-  ORDER_STATUS: "order:status",
-  BILL_REQUESTED: "bill:requested",
-  SESSION_CLOSED: "session:closed",
-  ASSISTANCE_REQUESTED: "assistance:requested",
-  MENU_UPDATED: "menu:updated",
+  ORDER_CREATED: "order.created",
+  ORDER_UPDATED: "order.updated",
+  ITEM_STATUS: "order_item.status_changed",
+  ITEM_READY: "order_item.ready",
+  ITEM_SERVED: "order_item.served",
+  BILL_REQUESTED: "bill.requested",
+  SESSION_CLOSED: "session.closed",
+  SESSION_REOPENED: "session.reopened",
+  ASSISTANCE_REQUESTED: "assistance_request.created",
+  MENU_UPDATED: "menu.updated",
 } as const;
+
+type SocketData = {
+  user?: AuthUser;
+  customer?: CustomerSessionClaim;
+};
 
 export function initSocket(server: HttpServer): SocketServer {
   io = new SocketServer(server, {
     cors: { origin: config.WEB_ORIGIN, credentials: true },
   });
 
+  // Every connection must authenticate as either staff or a customer session.
+  // A client-provided room name is never trusted as proof of access (spec 13).
   io.use((socket, next) => {
-    try {
-      const token =
-        socket.handshake.auth?.token ??
-        socket.handshake.headers.authorization?.toString().replace("Bearer ", "");
-      if (!token) return next(new Error("UNAUTHORIZED"));
-      const user = verifyToken(token);
-      (socket.data as { user?: unknown }).user = user;
-      next();
-    } catch {
-      next(new Error("UNAUTHORIZED"));
+    const data = socket.data as SocketData;
+    const token =
+      socket.handshake.auth?.token ??
+      socket.handshake.auth?.sessionToken ??
+      socket.handshake.headers.authorization?.toString().replace("Bearer ", "");
+
+    if (typeof token === "string" && token.length > 0) {
+      try {
+        const decoded = verifyToken(token) as AuthUser;
+        // Only accept as staff when the payload actually carries a staff identity.
+        if (decoded?.id && decoded?.role) {
+          data.user = decoded;
+          return next();
+        }
+      } catch {
+        /* not a staff token — fall through to customer session */
+      }
+      try {
+        data.customer = verifyCustomerSessionToken(token);
+        return next();
+      } catch {
+        /* invalid */
+      }
     }
+    next(new Error("UNAUTHORIZED"));
   });
 
   io.on("connection", (socket: Socket) => {
-    const user = (socket.data as { user?: { id: string; role: string } }).user;
-    logger.info("Socket connected", { userId: user?.id, role: user?.role });
+    const data = socket.data as SocketData;
 
-    // Staff roles join role rooms for live ops.
-    if (user?.role) socket.join(`role:${user.role}`);
-    if (user?.id) socket.join(`user:${user.id}`);
+    if (data.user) {
+      const { id, role } = data.user;
+      logger.info("Staff socket connected", { userId: id, role });
+      socket.join(`role:${role}`);
+      socket.join(`user:${id}`);
+    }
 
-    // Room subscriptions must be authorized by role, never trusted blindly.
-    socket.on("subscribe:table", (tableCode: string) => {
-      const user2 = (socket.data as { user?: { role: string } }).user;
-      if (user2?.role === "CUSTOMER" || user2?.role === "WAITER" || user2?.role === "ADMIN") {
-        socket.join(`table:${tableCode}`);
-      } else {
-        socket.emit("error", { code: "FORBIDDEN", message: "Not allowed to subscribe" });
-      }
-    });
+    if (data.customer) {
+      const { sessionId, tableId } = data.customer;
+      logger.debug("Customer socket connected", { sessionId, tableId });
+      // Server-derived rooms only — never named by the client.
+      socket.join(`session:${sessionId}`);
+      socket.join(`table:${tableId}`);
+    }
 
+    // Kitchen staff may opt into their role room (already auto-joined above).
     socket.on("subscribe:kitchen", () => {
-      const user2 = (socket.data as { user?: { role: string } }).user;
-      if (user2?.role === "KITCHEN" || user2?.role === "ADMIN") socket.join("role:KITCHEN");
+      if (data.user?.role === "KITCHEN" || data.user?.role === "ADMIN") socket.join("role:KITCHEN");
       else socket.emit("error", { code: "FORBIDDEN", message: "Not allowed" });
     });
 
-    socket.on("disconnect", () => logger.debug("Socket disconnected", { userId: user?.id }));
+    socket.on("disconnect", () => logger.debug("Socket disconnected", { userId: data.user?.id }));
   });
 
   return io;
 }
 
-function emitToStaffAndRole(event: string, payload: unknown, roles: string[]) {
+function emitToStaff(event: string, payload: unknown, roles: string[]) {
   if (!io) return;
   for (const role of roles) io.to(`role:${role}`).emit(event, payload);
 }
 
-export function emitOrderCreated(order: Record<string, unknown>, tableCode?: string) {
-  if (!io) return;
-  if (tableCode) io.to(`table:${tableCode}`).emit(SOCKET_EVENTS.ORDER_CREATED, order);
-  emitToStaffAndRole(SOCKET_EVENTS.ORDER_CREATED, order, ["KITCHEN", "WAITER", "ADMIN"]);
+function emitToSession(event: string, payload: unknown, sessionId?: string) {
+  if (!io || !sessionId) return;
+  io.to(`session:${sessionId}`).emit(event, payload);
 }
 
-export function emitOrderStatus(order: unknown, tableCode?: string) {
-  if (!io) return;
-  if (tableCode) io.to(`table:${tableCode}`).emit(SOCKET_EVENTS.ORDER_STATUS, order);
-  emitToStaffAndRole(SOCKET_EVENTS.ORDER_STATUS, order, ["KITCHEN", "WAITER", "ADMIN"]);
+const STAFF = ["KITCHEN", "WAITER", "ADMIN"];
+
+export function emitOrderCreated(payload: Record<string, unknown>, sessionId?: string) {
+  emitToSession(SOCKET_EVENTS.ORDER_CREATED, payload, sessionId);
+  emitToStaff(SOCKET_EVENTS.ORDER_CREATED, payload, STAFF);
 }
 
-export function emitBillRequested(payload: unknown, tableCode?: string) {
-  if (!io) return;
-  if (tableCode) io.to(`table:${tableCode}`).emit(SOCKET_EVENTS.BILL_REQUESTED, payload);
-  emitToStaffAndRole(SOCKET_EVENTS.BILL_REQUESTED, payload, ["WAITER", "ADMIN"]);
+export function emitOrderUpdated(payload: Record<string, unknown>, sessionId?: string) {
+  emitToSession(SOCKET_EVENTS.ORDER_UPDATED, payload, sessionId);
+  emitToStaff(SOCKET_EVENTS.ORDER_UPDATED, payload, STAFF);
 }
 
-export function emitSessionClosed(payload: unknown, tableCode?: string) {
-  if (!io) return;
-  if (tableCode) io.to(`table:${tableCode}`).emit(SOCKET_EVENTS.SESSION_CLOSED, payload);
-  emitToStaffAndRole(SOCKET_EVENTS.SESSION_CLOSED, payload, ["KITCHEN", "WAITER", "ADMIN"]);
+/** Emit the granular item-level events a chef/waiter/customer view reacts to. */
+export function emitItemStatus(payload: Record<string, unknown>, sessionId?: string) {
+  emitToSession(SOCKET_EVENTS.ITEM_STATUS, payload, sessionId);
+  emitToStaff(SOCKET_EVENTS.ITEM_STATUS, payload, STAFF);
+  if (payload.toStatus === "READY") {
+    emitToStaff(SOCKET_EVENTS.ITEM_READY, payload, ["WAITER", "ADMIN"]);
+    emitToSession(SOCKET_EVENTS.ITEM_READY, payload, sessionId);
+  }
+  if (payload.toStatus === "SERVED") {
+    emitToStaff(SOCKET_EVENTS.ITEM_SERVED, payload, ["WAITER", "ADMIN", "KITCHEN"]);
+    emitToSession(SOCKET_EVENTS.ITEM_SERVED, payload, sessionId);
+  }
 }
 
-export function emitAssistance(payload: unknown, tableCode?: string) {
-  if (!io) return;
-  if (tableCode) io.to(`table:${tableCode}`).emit(SOCKET_EVENTS.ASSISTANCE_REQUESTED, payload);
-  emitToStaffAndRole(SOCKET_EVENTS.ASSISTANCE_REQUESTED, payload, ["WAITER", "ADMIN"]);
+export function emitBillRequested(payload: unknown, sessionId?: string) {
+  emitToSession(SOCKET_EVENTS.BILL_REQUESTED, payload, sessionId);
+  emitToStaff(SOCKET_EVENTS.BILL_REQUESTED, payload, ["WAITER", "ADMIN"]);
+}
+
+export function emitSessionClosed(payload: unknown, sessionId?: string) {
+  emitToSession(SOCKET_EVENTS.SESSION_CLOSED, payload, sessionId);
+  emitToStaff(SOCKET_EVENTS.SESSION_CLOSED, payload, STAFF);
+}
+
+export function emitSessionReopened(payload: unknown, sessionId?: string) {
+  emitToSession(SOCKET_EVENTS.SESSION_REOPENED, payload, sessionId);
+  emitToStaff(SOCKET_EVENTS.SESSION_REOPENED, payload, STAFF);
+}
+
+export function emitAssistance(payload: unknown, sessionId?: string) {
+  emitToSession(SOCKET_EVENTS.ASSISTANCE_REQUESTED, payload, sessionId);
+  emitToStaff(SOCKET_EVENTS.ASSISTANCE_REQUESTED, payload, ["WAITER", "ADMIN"]);
+}
+
+export function emitMenuUpdated(payload: unknown) {
+  emitToStaff(SOCKET_EVENTS.MENU_UPDATED, payload, STAFF);
 }

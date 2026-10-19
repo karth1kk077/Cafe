@@ -2,6 +2,11 @@ import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { config } from "../config/index.js";
 import { ForbiddenError, UnauthorizedError } from "../lib/errors.js";
+import {
+  readCustomerSessionToken,
+  verifyCustomerSessionToken,
+  type CustomerSessionClaim,
+} from "../lib/customerSession.js";
 import type { Role } from "@cafe/shared";
 
 export interface AuthUser {
@@ -16,6 +21,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
+      customerSession?: CustomerSessionClaim;
     }
   }
 }
@@ -54,5 +60,28 @@ export function authorize(...roles: Role[]) {
       return next(new ForbiddenError());
     }
     next();
+  };
+}
+
+/**
+ * Require a valid, session-scoped customer token. When `param` is given the
+ * token's session must match that route parameter, so a customer can never
+ * read or mutate another table's session by swapping an id in the URL.
+ */
+export function requireCustomerSession(param = "sessionId") {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    try {
+      const token = readCustomerSessionToken(req.headers["x-session-token"]);
+      if (!token) throw new UnauthorizedError("A session token is required");
+      const claim = verifyCustomerSessionToken(token);
+      const routeSession = String(req.params?.[param] ?? "");
+      if (routeSession && routeSession !== claim.sessionId) {
+        throw new UnauthorizedError("Session token does not match");
+      }
+      req.customerSession = claim;
+      next();
+    } catch {
+      next(new UnauthorizedError("Invalid or expired session token"));
+    }
   };
 }

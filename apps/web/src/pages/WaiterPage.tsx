@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, formatMoney } from "../lib/api";
+import { api, formatMoney, type OrderItemStatus } from "../lib/api";
 import { SOCKET_EVENTS, getSocket } from "../lib/socket";
 import { useAuth } from "../lib/auth";
 
@@ -12,9 +12,22 @@ interface Table {
   sessions: Array<{
     id: string;
     status: string;
-    orders: Array<{ id: string; status: string }>;
+    orders: Array<{
+      id: string;
+      status: string;
+      items: Array<{ id: string; nameSnapshot: string; quantity: number; status: OrderItemStatus }>;
+    }>;
     bills: Array<{ id: string; status: string; totalMinor: number }>;
   }>;
+}
+
+interface ReadyItem {
+  id: string;
+  nameSnapshot: string;
+  quantity: number;
+  readyAt?: string | null;
+  addons: Array<{ nameSnapshot: string }>;
+  order: { id: string; orderNumber: string; table: { number: string } };
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -24,6 +37,19 @@ const STATUS_COLOR: Record<string, string> = {
   PAYMENT_PENDING: "bg-orange-100 text-orange-800",
   CLOSED: "bg-slate-100 text-slate-600",
 };
+
+const ITEM_STYLE: Record<OrderItemStatus, string> = {
+  QUEUED: "bg-slate-100 text-slate-600",
+  PREPARING: "bg-amber-100 text-amber-800",
+  READY: "bg-green-100 text-green-800",
+  SERVED: "bg-emerald-50 text-emerald-700",
+  CANCELLED: "bg-red-100 text-red-700",
+};
+
+function minutesSince(iso?: string | null) {
+  if (!iso) return 0;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+}
 
 export function WaiterPage() {
   const queryClient = useQueryClient();
@@ -36,6 +62,12 @@ export function WaiterPage() {
     queryFn: () => api.get("/staff/tables"),
   });
 
+  const { data: ready, refetch: refetchReady } = useQuery<{ items: ReadyItem[] }>({
+    queryKey: ["ready-items"],
+    queryFn: () => api.get("/staff/order-items/ready"),
+    refetchInterval: 20000,
+  });
+
   const { data: assistance } = useQuery<{ requests: Array<{ id: string; table: { number: string }; message?: string }> }>({
     queryKey: ["assistance"],
     queryFn: () => api.get("/staff/assistance"),
@@ -45,17 +77,22 @@ export function WaiterPage() {
     const socket = getSocket(localStorage.getItem("cafe_token") || undefined);
     const refresh = () => {
       refetch();
+      refetchReady();
       queryClient.invalidateQueries({ queryKey: ["assistance"] });
     };
     socket.on(SOCKET_EVENTS.ORDER_CREATED, refresh);
+    socket.on(SOCKET_EVENTS.ITEM_READY, refresh);
+    socket.on(SOCKET_EVENTS.ITEM_STATUS, refresh);
     socket.on(SOCKET_EVENTS.BILL_REQUESTED, refresh);
     socket.on(SOCKET_EVENTS.ASSISTANCE_REQUESTED, refresh);
     return () => {
       socket.off(SOCKET_EVENTS.ORDER_CREATED, refresh);
+      socket.off(SOCKET_EVENTS.ITEM_READY, refresh);
+      socket.off(SOCKET_EVENTS.ITEM_STATUS, refresh);
       socket.off(SOCKET_EVENTS.BILL_REQUESTED, refresh);
       socket.off(SOCKET_EVENTS.ASSISTANCE_REQUESTED, refresh);
     };
-  }, [refetch, queryClient]);
+  }, [refetch, refetchReady, queryClient]);
 
   const openSession = useMutation({
     mutationFn: (tableId: string) => api.post(`/staff/tables/${tableId}/sessions`),
@@ -78,14 +115,37 @@ export function WaiterPage() {
     onSuccess: () => { refetch(); setPayAmount(""); },
   });
 
-  const markReady = useMutation({
-    mutationFn: (orderId: string) => api.patch(`/staff/orders/${orderId}/status`, { status: "SERVED" }),
-    onSuccess: () => refetch(),
+  // The waiter's job: collect READY dishes and mark each one SERVED.
+  const serveItem = useMutation({
+    mutationFn: (itemId: string) => api.patch(`/staff/order-items/${itemId}/status`, { status: "SERVED" }),
+    onSuccess: () => { refetch(); refetchReady(); setSelected(null); },
+    onError: (e: Error) => alert(e.message),
+  });
+
+  const cancelItem = useMutation({
+    mutationFn: ({ itemId, reason }: { itemId: string; reason: string }) =>
+      api.post(`/staff/order-items/${itemId}/cancel`, { reason }),
+    onSuccess: () => { refetch(); refetchReady(); },
+    onError: (e: Error) => alert(e.message),
   });
 
   const tables = data?.tables ?? [];
   const billRequested = tables.filter((t) => t.status === "BILL_REQUESTED");
   const active = assistance?.requests ?? [];
+  const readyItems = ready?.items ?? [];
+
+  // Group ready dishes by table + order for the pickup queue.
+  const readyGroups = readyItems.reduce<Record<string, { tableNumber: string; orderNumber: string; items: ReadyItem[] }>>(
+    (acc, item) => {
+      const key = item.order.id;
+      if (!acc[key]) {
+        acc[key] = { tableNumber: item.order.table.number, orderNumber: item.order.orderNumber, items: [] };
+      }
+      acc[key].items.push(item);
+      return acc;
+    },
+    {}
+  );
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -95,7 +155,7 @@ export function WaiterPage() {
           <div className="text-xs opacity-70">{user?.name}</div>
         </div>
         <div className="flex gap-2">
-          <button className="btn btn-ghost !text-white !border-white/30 text-sm" onClick={() => refetch()}>↻</button>
+          <button className="btn btn-ghost !text-white !border-white/30 text-sm" onClick={() => { refetch(); refetchReady(); }}>↻</button>
           <button className="btn btn-ghost !text-white !border-white/30 text-sm" onClick={() => { logout(); location.href = "/login"; }}>Exit</button>
         </div>
       </header>
@@ -111,30 +171,76 @@ export function WaiterPage() {
         </div>
       )}
 
-      <main className="p-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-        {tables.map((t) => {
-          const session = t.sessions[0];
-          const openOrders = session?.orders.filter((o) => !["SERVED", "CANCELLED"].includes(o.status)).length ?? 0;
-          return (
-            <button
-              key={t.id}
-              className={`card p-3 text-left ${t.status === "BILL_REQUESTED" ? "!border-amber-400" : ""}`}
-              onClick={() => setSelected(t)}
-            >
+      {/* Ready dish pickup queue (spec 8.2). */}
+      <section className="p-3">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 mb-2">
+          Ready to serve {readyItems.length > 0 && <span className="badge bg-green-100 text-green-800 ml-1">{readyItems.length}</span>}
+        </h2>
+        {readyItems.length === 0 && <div className="text-sm text-slate-400">Nothing waiting for pickup.</div>}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {Object.entries(readyGroups).map(([orderId, group]) => (
+            <div key={orderId} className="card border-l-4 border-l-green-500 p-3">
               <div className="flex justify-between items-start">
-                <div className="text-lg font-bold">T{t.number}</div>
-                <span className={`badge ${STATUS_COLOR[t.status] ?? "bg-slate-100"}`}>{t.status.replace("_", " ")}</span>
-              </div>
-              {session && (
-                <div className="mt-1 text-xs text-slate-600">
-                  {openOrders > 0 ? `${openOrders} open order${openOrders > 1 ? "s" : ""}` : "No open orders"}
+                <div>
+                  <div className="font-bold">Table {group.tableNumber}</div>
+                  <div className="text-xs text-slate-500">{group.orderNumber}</div>
                 </div>
-              )}
-              {!session && t.status === "AVAILABLE" && <div className="mt-1 text-xs text-green-600">Available</div>}
-            </button>
-          );
-        })}
-      </main>
+                <span className="badge bg-green-100 text-green-800">{group.items.length} dish{group.items.length > 1 ? "es" : ""}</span>
+              </div>
+              <ul className="mt-2 space-y-2">
+                {group.items.map((it) => (
+                  <li key={it.id} className="flex justify-between items-center gap-2 border-t pt-2 first:border-t-0 first:pt-0">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold">{it.quantity}× {it.nameSnapshot}</div>
+                      {it.addons.length > 0 && <div className="text-xs text-slate-500">+ {it.addons.map((a) => a.nameSnapshot).join(", ")}</div>}
+                      <div className="text-xs text-slate-400">ready {minutesSince(it.readyAt)}m ago</div>
+                    </div>
+                    <button
+                      className="btn btn-primary text-xs !py-1"
+                      disabled={serveItem.isPending}
+                      onClick={() => serveItem.mutate(it.id)}
+                    >
+                      Served
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="p-3">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 mb-2">Tables</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          {tables.map((t) => {
+            const session = t.sessions[0];
+            const openItems =
+              session?.orders.reduce(
+                (n, o) => n + o.items.filter((it) => it.status !== "SERVED" && it.status !== "CANCELLED").length,
+                0
+              ) ?? 0;
+            return (
+              <button
+                key={t.id}
+                className={`card p-3 text-left ${t.status === "BILL_REQUESTED" ? "!border-amber-400" : ""}`}
+                onClick={() => setSelected(t)}
+              >
+                <div className="flex justify-between items-start">
+                  <div className="text-lg font-bold">T{t.number}</div>
+                  <span className={`badge ${STATUS_COLOR[t.status] ?? "bg-slate-100"}`}>{t.status.replace("_", " ")}</span>
+                </div>
+                {session && (
+                  <div className="mt-1 text-xs text-slate-600">
+                    {openItems > 0 ? `${openItems} dish${openItems > 1 ? "es" : ""} active` : "No open dishes"}
+                  </div>
+                )}
+                {!session && t.status === "AVAILABLE" && <div className="mt-1 text-xs text-green-600">Available</div>}
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       {selected && (
         <div className="fixed inset-0 z-40 bg-black/50 flex items-end sm:items-center justify-center">
@@ -153,9 +259,43 @@ export function WaiterPage() {
 
             {selected.sessions[0] && (
               <div className="space-y-3">
-                <div className="text-sm">
-                  <div className="font-semibold">Session {selected.sessions[0].id.slice(0, 8)}… ({selected.sessions[0].status})</div>
-                </div>
+                <div className="text-sm font-semibold">Session {selected.sessions[0].id.slice(0, 8)}… ({selected.sessions[0].status})</div>
+
+                {selected.sessions[0].orders.map((o) => (
+                  <div key={o.id} className="card p-3">
+                    <div className="flex justify-between text-xs text-slate-500">
+                      <span>{o.status}</span>
+                    </div>
+                    <ul className="mt-1 space-y-1.5">
+                      {o.items.map((it) => (
+                        <li key={it.id} className="flex justify-between items-center gap-2 text-sm">
+                          <span className="min-w-0 truncate">{it.quantity}× {it.nameSnapshot}</span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`badge ${ITEM_STYLE[it.status]}`}>{it.status}</span>
+                            {it.status === "READY" && (
+                              <button className="btn btn-primary !py-0.5 text-xs" disabled={serveItem.isPending} onClick={() => serveItem.mutate(it.id)}>
+                                Served
+                              </button>
+                            )}
+                            {(it.status === "QUEUED" || it.status === "PREPARING") && (
+                              <button
+                                className="btn btn-ghost !py-0.5 text-xs"
+                                disabled={cancelItem.isPending}
+                                onClick={() => {
+                                  const reason = window.prompt("Reason for cancelling this item?") ?? "";
+                                  cancelItem.mutate({ itemId: it.id, reason });
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+
                 <div className="flex gap-2">
                   <button className="btn btn-ghost flex-1 text-sm" onClick={() => generateBill.mutate(selected.sessions[0].id)} disabled={generateBill.isPending}>
                     Generate bill

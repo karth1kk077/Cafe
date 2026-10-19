@@ -29,12 +29,22 @@ enum SessionStatus {
   CLOSED
 }
 
-enum OrderStatus {
-  PENDING
-  ACCEPTED
+// Line-item preparation states (spec 11.1). Readiness is tracked per order item.
+enum OrderItemStatus {
+  QUEUED
   PREPARING
   READY
   SERVED
+  CANCELLED
+}
+
+// Derived order-level summary (spec 11.2), maintained from its items.
+enum OrderStatus {
+  RECEIVED
+  IN_PROGRESS
+  PARTIALLY_READY
+  READY
+  COMPLETED
   CANCELLED
 }
 
@@ -64,21 +74,22 @@ enum AssistanceStatus {
 }
 
 model User {
-  id            String   @id @default(uuid()) @db.Uuid
-  email         String   @unique
-  passwordHash  String
-  name          String
-  role          Role
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  openedSessions DiningSession[] @relation("SessionOpenedBy")
-  closedSessions DiningSession[] @relation("SessionClosedBy")
-  ordersCreated  Order[]         @relation("OrderCreatedBy")
-  payments       Payment[]       @relation("PaymentRecordedBy")
-  audits         AuditLog[]      @relation("AuditActor")
+  openedSessions DiningSession[]     @relation("SessionOpenedBy")
+  closedSessions DiningSession[]     @relation("SessionClosedBy")
+  ordersCreated  Order[]             @relation("OrderCreatedBy")
+  payments       Payment[]           @relation("PaymentRecordedBy")
+  audits         AuditLog[]          @relation("AuditActor")
   helpRequests   AssistanceRequest[] @relation("HelpAssignedTo")
+  itemEvents     OrderItemEvent[]    @relation("ItemEventActor")
 }
 
 model CafeTable {
@@ -133,36 +144,36 @@ model MenuCategory {
 }
 
 model MenuItem {
-  id          String   @id @default(uuid()) @db.Uuid
-  categoryId  String   @db.Uuid
+  id          String       @id @default(uuid()) @db.Uuid
+  categoryId  String       @db.Uuid
   category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   name        String
   description String?
   priceMinor  Int
-  currency    String   @default("INR")
+  currency    String       @default("INR")
   imageUrl    String?
-  isAvailable Boolean  @default(true)
-  maxQuantity Int      @default(20)
-  dietaryTags String[] @default([])
-  allergens   String[] @default([])
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isAvailable Boolean      @default(true)
+  maxQuantity Int          @default(20)
+  dietaryTags String[]     @default([])
+  allergens   String[]     @default([])
+  sortOrder   Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
-  variants MenuItemVariant[]
-  addons   MenuItemAddon[]
+  variants   MenuItemVariant[]
+  addons     MenuItemAddon[]
   orderItems OrderItem[]
 
   @@index([categoryId, isAvailable])
 }
 
 model MenuItemVariant {
-  id         String   @id @default(uuid()) @db.Uuid
-  menuItemId String   @db.Uuid
-  menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
-  name       String
-  priceDeltaMinor Int @default(0)
-  isActive   Boolean  @default(true)
+  id              String   @id @default(uuid()) @db.Uuid
+  menuItemId      String   @db.Uuid
+  menuItem        MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  name            String
+  priceDeltaMinor Int      @default(0)
+  isActive        Boolean  @default(true)
 
   orderItems OrderItem[]
 
@@ -183,26 +194,26 @@ model MenuItemAddon {
 }
 
 model Order {
-  id             String      @id @default(uuid()) @db.Uuid
-  orderNumber    String      @unique
-  sessionId      String      @db.Uuid
-  session        DiningSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
-  tableId        String      @db.Uuid
-  table          CafeTable   @relation(fields: [tableId], references: [id], onDelete: Restrict)
-  status         OrderStatus @default(PENDING)
-  subtotalMinor  Int
-  taxMinor       Int         @default(0)
-  serviceChargeMinor Int     @default(0)
-  totalMinor     Int
-  currency       String      @default("INR")
-  createdBy      String?     @db.Uuid
-  createdByUser  User?       @relation("OrderCreatedBy", fields: [createdBy], references: [id])
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  id                 String        @id @default(uuid()) @db.Uuid
+  orderNumber        String        @unique
+  sessionId          String        @db.Uuid
+  session            DiningSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  tableId            String        @db.Uuid
+  table              CafeTable     @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  status             OrderStatus   @default(RECEIVED)
+  subtotalMinor      Int
+  taxMinor           Int           @default(0)
+  serviceChargeMinor Int           @default(0)
+  totalMinor         Int
+  currency           String        @default("INR")
+  createdBy          String?       @db.Uuid
+  createdByUser      User?         @relation("OrderCreatedBy", fields: [createdBy], references: [id])
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
-  items        OrderItem[]
+  items         OrderItem[]
   statusHistory OrderStatusHistory[]
-  billItems    BillLineItem[]
+  billItems     BillLineItem[]
 
   @@index([sessionId, status])
   @@index([status, createdAt])
@@ -210,67 +221,96 @@ model Order {
 }
 
 model OrderItem {
-  id                 String    @id @default(uuid()) @db.Uuid
-  orderId            String    @db.Uuid
-  order              Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  menuItemId         String    @db.Uuid
-  menuItem           MenuItem  @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
-  variantId          String?   @db.Uuid
-  variant            MenuItemVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
-  nameSnapshot       String
-  unitPriceMinor     Int
-  quantity           Int
-  lineTotalMinor     Int
+  id                  String           @id @default(uuid()) @db.Uuid
+  orderId             String           @db.Uuid
+  order               Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId          String           @db.Uuid
+  menuItem            MenuItem         @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+  variantId           String?          @db.Uuid
+  variant             MenuItemVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  nameSnapshot        String
+  unitPriceMinor      Int
+  quantity            Int
+  lineTotalMinor      Int
   specialInstructions String?
-  currency           String    @default("INR")
-  createdAt          DateTime  @default(now())
+  currency            String           @default("INR")
+  // Per-line-item preparation state. Chef marks READY, waiter marks SERVED.
+  status              OrderItemStatus  @default(QUEUED)
+  preparingAt         DateTime?
+  readyAt             DateTime?
+  servedAt            DateTime?
+  cancelledAt         DateTime?
+  cancelReason        String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
 
   addons OrderItemAddon[]
+  events OrderItemEvent[]
 
+  @@index([orderId])
+  @@index([status, updatedAt])
+}
+
+// Immutable per-item status history (spec 10.9).
+model OrderItemEvent {
+  id          String           @id @default(uuid()) @db.Uuid
+  orderItemId String           @db.Uuid
+  orderItem   OrderItem        @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  orderId     String           @db.Uuid
+  fromStatus  OrderItemStatus?
+  toStatus    OrderItemStatus
+  actorId     String?          @db.Uuid
+  actor       User?            @relation("ItemEventActor", fields: [actorId], references: [id])
+  // STAFF | CUSTOMER | SYSTEM
+  source      String           @default("STAFF")
+  reason      String?
+  createdAt   DateTime         @default(now())
+
+  @@index([orderItemId, createdAt])
   @@index([orderId])
 }
 
 model OrderItemAddon {
-  id          String        @id @default(uuid()) @db.Uuid
-  orderItemId String        @db.Uuid
-  orderItem   OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
-  addonId     String        @db.Uuid
-  addon       MenuItemAddon @relation(fields: [addonId], references: [id], onDelete: Restrict)
-  nameSnapshot String
+  id                 String        @id @default(uuid()) @db.Uuid
+  orderItemId        String        @db.Uuid
+  orderItem          OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  addonId            String        @db.Uuid
+  addon              MenuItemAddon @relation(fields: [addonId], references: [id], onDelete: Restrict)
+  nameSnapshot       String
   priceSnapshotMinor Int
-  createdAt   DateTime      @default(now())
+  createdAt          DateTime      @default(now())
 }
 
 model OrderStatusHistory {
-  id        String      @id @default(uuid()) @db.Uuid
-  orderId   String      @db.Uuid
-  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id         String       @id @default(uuid()) @db.Uuid
+  orderId    String       @db.Uuid
+  order      Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
   fromStatus OrderStatus?
-  toStatus  OrderStatus
-  changedBy String?     @db.Uuid
-  note      String?
-  createdAt DateTime    @default(now())
+  toStatus   OrderStatus
+  changedBy  String?      @db.Uuid
+  note       String?
+  createdAt  DateTime     @default(now())
 
   @@index([orderId, createdAt])
 }
 
 model Bill {
-  id              String      @id @default(uuid()) @db.Uuid
-  billNumber      String      @unique
-  sessionId       String      @db.Uuid
-  session         DiningSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
-  tableId         String      @db.Uuid
-  table           CafeTable   @relation(fields: [tableId], references: [id], onDelete: Restrict)
-  status          BillStatus  @default(OPEN)
-  subtotalMinor   Int
-  taxMinor        Int         @default(0)
-  serviceChargeMinor Int      @default(0)
-  discountMinor   Int         @default(0)
-  roundingMinor   Int         @default(0)
-  totalMinor      Int
-  currency        String      @default("INR")
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id                 String        @id @default(uuid()) @db.Uuid
+  billNumber         String        @unique
+  sessionId          String        @db.Uuid
+  session            DiningSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  tableId            String        @db.Uuid
+  table              CafeTable     @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  status             BillStatus    @default(OPEN)
+  subtotalMinor      Int
+  taxMinor           Int           @default(0)
+  serviceChargeMinor Int           @default(0)
+  discountMinor      Int           @default(0)
+  roundingMinor      Int           @default(0)
+  totalMinor         Int
+  currency           String        @default("INR")
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   lineItems BillLineItem[]
   payments  Payment[]
@@ -280,63 +320,63 @@ model Bill {
 }
 
 model BillLineItem {
-  id          String   @id @default(uuid()) @db.Uuid
-  billId      String   @db.Uuid
-  bill        Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
-  orderId     String   @db.Uuid
-  order       Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  nameSnapshot String
-  quantity    Int
+  id             String   @id @default(uuid()) @db.Uuid
+  billId         String   @db.Uuid
+  bill           Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  orderId        String   @db.Uuid
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  nameSnapshot   String
+  quantity       Int
   unitPriceMinor Int
   lineTotalMinor Int
-  currency    String   @default("INR")
-  createdAt   DateTime @default(now())
+  currency       String   @default("INR")
+  createdAt      DateTime @default(now())
 
   @@index([billId])
 }
 
 model Payment {
-  id            String        @id @default(uuid()) @db.Uuid
-  billId        String        @db.Uuid
-  bill          Bill          @relation(fields: [billId], references: [id], onDelete: Restrict)
-  amountMinor   Int
-  method        PaymentMethod
-  status        PaymentStatus @default(COMPLETED)
-  reference     String?
-  recordedBy    String        @db.Uuid
-  recordedByUser User         @relation("PaymentRecordedBy", fields: [recordedBy], references: [id])
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id             String        @id @default(uuid()) @db.Uuid
+  billId         String        @db.Uuid
+  bill           Bill          @relation(fields: [billId], references: [id], onDelete: Restrict)
+  amountMinor    Int
+  method         PaymentMethod
+  status         PaymentStatus @default(COMPLETED)
+  reference      String?
+  recordedBy     String        @db.Uuid
+  recordedByUser User          @relation("PaymentRecordedBy", fields: [recordedBy], references: [id])
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   @@index([billId, status])
 }
 
 model AssistanceRequest {
-  id          String           @id @default(uuid()) @db.Uuid
-  sessionId   String           @db.Uuid
-  session     DiningSession    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  tableId     String           @db.Uuid
-  table       CafeTable        @relation(fields: [tableId], references: [id], onDelete: Cascade)
-  status      AssistanceStatus @default(OPEN)
-  message     String?
-  assignedTo  String?          @db.Uuid
-  assignedToUser User?         @relation("HelpAssignedTo", fields: [assignedTo], references: [id])
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  id             String           @id @default(uuid()) @db.Uuid
+  sessionId      String           @db.Uuid
+  session        DiningSession    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  tableId        String           @db.Uuid
+  table          CafeTable        @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  status         AssistanceStatus @default(OPEN)
+  message        String?
+  assignedTo     String?          @db.Uuid
+  assignedToUser User?            @relation("HelpAssignedTo", fields: [assignedTo], references: [id])
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   @@index([status, createdAt])
 }
 
 model AuditLog {
-  id        String   @id @default(uuid()) @db.Uuid
-  actorId   String?  @db.Uuid
-  actor     User?    @relation("AuditActor", fields: [actorId], references: [id])
-  action    String
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @db.Uuid
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id])
+  action     String
   entityType String
-  entityId  String?
-  metadata  Json?
-  ipAddress String?
-  createdAt DateTime @default(now())
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
 
   @@index([actorId, createdAt])
   @@index([entityType, entityId])
@@ -357,11 +397,11 @@ model IdempotencyKey {
 }
 
 model Settings {
-  id    String @id @default("singleton")
-  cafeName String @default("Smart Café")
-  currency String @default("INR")
-  taxRateBps Int @default(500) // basis points, 500 = 5%
-  serviceChargeBps Int @default(0)
-  roundingEnabled Boolean @default(true)
-  updatedAt DateTime @updatedAt
+  id               String   @id @default("singleton")
+  cafeName         String   @default("Smart Café")
+  currency         String   @default("INR")
+  taxRateBps       Int      @default(500) // basis points, 500 = 5%
+  serviceChargeBps Int      @default(0)
+  roundingEnabled  Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
 }

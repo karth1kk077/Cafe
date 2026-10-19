@@ -1,11 +1,12 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
 import {
-  OrderStatusSchema,
   TableCreateSchema,
   CloseSessionSchema,
   ReopenSessionSchema,
   PaymentRecordSchema,
+  UpdateOrderItemStatusSchema,
+  CancelOrderItemSchema,
 } from "@cafe/shared";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { authenticate, authorize } from "../middleware/auth.js";
@@ -17,16 +18,49 @@ import {
   reopenSession,
   getSessionDetail,
 } from "../services/sessionService.js";
-import { updateOrderStatus, listOrders, getOrder } from "../services/orderService.js";
+import { listOrders, getOrder } from "../services/orderService.js";
+import {
+  cancelOrderItem,
+  listReadyItems,
+  transitionOrderItem,
+} from "../services/orderItemService.js";
 import { generateBill, recordPayment } from "../services/billingService.js";
 import { getSettings, updateSettings } from "../services/menuService.js";
 import { hashPassword } from "../services/authService.js";
 import { RoleSchema } from "@cafe/shared";
-import { emitOrderStatus, emitSessionClosed } from "../socket/index.js";
+import {
+  emitItemStatus,
+  emitOrderUpdated,
+  emitSessionClosed,
+  emitSessionReopened,
+} from "../socket/index.js";
 import { z } from "zod";
 
 export const staffRouter = Router();
 staffRouter.use(authenticate);
+
+/**
+ * Broadcast a line-item transition and, when it changed the derived order
+ * summary, the order update too (spec 13).
+ */
+function broadcastItemTransition(result: Awaited<ReturnType<typeof transitionOrderItem>>) {
+  const sessionId = result.order.sessionId;
+  const payload = {
+    orderId: result.order.id,
+    orderStatus: result.order.status,
+    sessionId,
+    item: result.item,
+    fromStatus: result.previousStatus,
+    toStatus: result.item.status,
+  };
+  emitItemStatus(payload, sessionId);
+  if (result.orderStatusChanged) {
+    emitOrderUpdated(
+      { id: result.order.id, sessionId, status: result.order.status, updatedAt: new Date() },
+      sessionId
+    );
+  }
+}
 
 // ---- Tables & sessions (waiter/admin) ----
 staffRouter.get(
@@ -40,7 +74,10 @@ staffRouter.get(
           orderBy: { openedAt: "desc" },
           take: 1,
           include: {
-            orders: { where: { status: { notIn: ["SERVED", "CANCELLED"] } } },
+            orders: {
+              where: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
+              include: { items: true },
+            },
             bills: true,
           },
         },
@@ -58,6 +95,39 @@ staffRouter.post(
     const qrToken = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
     const table = await prisma.cafeTable.create({ data: { number: body.number, qrToken } });
     res.status(201).json({ table });
+  })
+);
+
+// Update a table, optionally rotating its QR token (leaked/stale QR remediation).
+staffRouter.patch(
+  "/tables/:tableId",
+  authorize("ADMIN"),
+  asyncHandler(async (req, res) => {
+    const body = z
+      .object({
+        number: z.string().min(1).max(20).optional(),
+        seats: z.number().int().min(1).max(50).optional(),
+        isActive: z.boolean().optional(),
+        rotateQr: z.boolean().optional(),
+      })
+      .parse(req.body);
+
+    const data: Record<string, unknown> = {};
+    if (body.number !== undefined) data.number = body.number;
+    if (body.seats !== undefined) data.seats = body.seats;
+    if (body.isActive !== undefined) data.isActive = body.isActive;
+    if (body.rotateQr) data.qrToken = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
+
+    const table = await prisma.cafeTable.update({ where: { id: String(req.params.tableId) }, data });
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.user!.id,
+        action: body.rotateQr ? "TABLE_QR_ROTATED" : "TABLE_UPDATED",
+        entityType: "CafeTable",
+        entityId: table.id,
+      },
+    });
+    res.json({ table });
   })
 );
 
@@ -86,7 +156,7 @@ staffRouter.post(
     const body = CloseSessionSchema.parse(req.body);
     const session = await closeSession(String(req.params.sessionId), req.user!, body.reason);
     const table = await prisma.cafeTable.findUnique({ where: { id: session.tableId } });
-    emitSessionClosed({ sessionId: session.id, tableNumber: table?.number }, table?.qrToken);
+    emitSessionClosed({ sessionId: session.id, tableNumber: table?.number }, session.id);
     res.json({ session });
   })
 );
@@ -97,6 +167,7 @@ staffRouter.post(
   asyncHandler(async (req, res) => {
     const body = ReopenSessionSchema.parse(req.body);
     const session = await reopenSession(String(req.params.sessionId), req.user!, body.reason);
+    emitSessionReopened({ sessionId: session.id, status: session.status }, session.id);
     res.json({ session });
   })
 );
@@ -112,6 +183,16 @@ staffRouter.get(
   })
 );
 
+// Ready-dish queue: all items awaiting collection, oldest first (spec 8.2).
+staffRouter.get(
+  "/order-items/ready",
+  authorize("WAITER", "ADMIN"),
+  asyncHandler(async (_req, res) => {
+    const items = await listReadyItems();
+    res.json({ items });
+  })
+);
+
 staffRouter.get(
   "/orders/:orderId",
   authorize("KITCHEN", "WAITER", "ADMIN"),
@@ -121,15 +202,34 @@ staffRouter.get(
   })
 );
 
+// Move a single line item through its lifecycle. Role + transition legality are
+// enforced in the service against the central transition table (spec 7.2/14).
 staffRouter.patch(
-  "/orders/:orderId/status",
+  "/order-items/:itemId/status",
   authorize("KITCHEN", "WAITER", "ADMIN"),
   asyncHandler(async (req, res) => {
-    const body = z.object({ status: OrderStatusSchema, note: z.string().max(200).optional() }).parse(req.body);
-    const order = await updateOrderStatus(String(req.params.orderId), body.status, req.user!, body.note);
-    const table = await prisma.cafeTable.findUnique({ where: { id: order.tableId } });
-    emitOrderStatus({ ...order, tableNumber: table?.number }, table?.qrToken);
-    res.json({ order });
+    const body = UpdateOrderItemStatusSchema.parse(req.body);
+    const result = await transitionOrderItem({
+      itemId: String(req.params.itemId),
+      toStatus: body.status,
+      actor: { id: req.user!.id, role: req.user!.role },
+      source: "STAFF",
+      reason: body.note,
+    });
+    broadcastItemTransition(result);
+    res.json({ item: result.item, order: result.order });
+  })
+);
+
+// Cancel a single line item (supervisor authorization for post-prep cancels).
+staffRouter.post(
+  "/order-items/:itemId/cancel",
+  authorize("KITCHEN", "WAITER", "ADMIN"),
+  asyncHandler(async (req, res) => {
+    const body = CancelOrderItemSchema.parse(req.body);
+    const result = await cancelOrderItem(String(req.params.itemId), { id: req.user!.id, role: req.user!.role }, body.reason);
+    broadcastItemTransition(result);
+    res.json({ item: result.item, order: result.order });
   })
 );
 

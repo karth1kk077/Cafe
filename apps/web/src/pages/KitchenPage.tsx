@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, formatMoney } from "../lib/api";
+import { api, formatMoney, type OrderItemStatus, type OrderStatus } from "../lib/api";
 import { SOCKET_EVENTS, getSocket } from "../lib/socket";
 import { useAuth } from "../lib/auth";
 
 interface KitchenOrder {
   id: string;
   orderNumber: string;
-  status: string;
+  status: OrderStatus;
   totalMinor: number;
   createdAt: string;
   table: { number: string };
@@ -16,25 +16,27 @@ interface KitchenOrder {
     nameSnapshot: string;
     quantity: number;
     unitPriceMinor: number;
-    specialInstructions?: string;
+    specialInstructions?: string | null;
+    status: OrderItemStatus;
     addons: Array<{ nameSnapshot: string }>;
   }>;
 }
 
-const FILTERS = [
-  { key: "PENDING,ACCEPTED", label: "New" },
-  { key: "PREPARING", label: "Preparing" },
-  { key: "READY", label: "Ready" },
-  { key: "SERVED,CANCELLED", label: "Done" },
-] as const;
+type FilterKey = "queued" | "preparing" | "ready" | "all";
 
-const STATUS_COLOR: Record<string, string> = {
-  PENDING: "border-l-slate-400",
-  ACCEPTED: "border-l-blue-500",
-  PREPARING: "border-l-amber-500",
-  READY: "border-l-green-500",
-  SERVED: "border-l-emerald-300",
-  CANCELLED: "border-l-red-400",
+const FILTERS: Array<{ key: FilterKey; label: string; match: OrderItemStatus[] }> = [
+  { key: "queued", label: "New", match: ["QUEUED"] },
+  { key: "preparing", label: "Preparing", match: ["PREPARING"] },
+  { key: "ready", label: "Ready", match: ["READY"] },
+  { key: "all", label: "All active", match: ["QUEUED", "PREPARING", "READY"] },
+];
+
+const ITEM_STYLE: Record<OrderItemStatus, string> = {
+  QUEUED: "bg-slate-100 text-slate-700",
+  PREPARING: "bg-amber-100 text-amber-800",
+  READY: "bg-green-100 text-green-800",
+  SERVED: "bg-emerald-50 text-emerald-700",
+  CANCELLED: "bg-red-100 text-red-700",
 };
 
 function minutesSince(iso: string) {
@@ -44,13 +46,15 @@ function minutesSince(iso: string) {
 export function KitchenPage() {
   const queryClient = useQueryClient();
   const { user, logout } = useAuth();
-  const [filter, setFilter] = useState<string>(FILTERS[0].key);
+  const [filter, setFilter] = useState<FilterKey>("queued");
   const [soundOn, setSoundOn] = useState(true);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const soundRef = useRef(soundOn);
+  soundRef.current = soundOn;
 
   const { data, refetch } = useQuery<{ orders: KitchenOrder[] }>({
     queryKey: ["kitchen-orders"],
-    queryFn: () => api.get(`/staff/orders?status=${filter}`),
+    queryFn: () => api.get("/staff/orders"),
+    refetchInterval: 15000,
   });
 
   useEffect(() => {
@@ -58,16 +62,18 @@ export function KitchenPage() {
     socket.emit("subscribe:kitchen");
     const onCreated = () => {
       refetch();
-      if (soundOn) playBeep();
+      if (soundRef.current) playBeep();
     };
-    const onStatus = () => refetch();
+    const onChanged = () => refetch();
     socket.on(SOCKET_EVENTS.ORDER_CREATED, onCreated);
-    socket.on(SOCKET_EVENTS.ORDER_STATUS, onStatus);
+    socket.on(SOCKET_EVENTS.ITEM_STATUS, onChanged);
+    socket.on(SOCKET_EVENTS.ORDER_UPDATED, onChanged);
     return () => {
       socket.off(SOCKET_EVENTS.ORDER_CREATED, onCreated);
-      socket.off(SOCKET_EVENTS.ORDER_STATUS, onStatus);
+      socket.off(SOCKET_EVENTS.ITEM_STATUS, onChanged);
+      socket.off(SOCKET_EVENTS.ORDER_UPDATED, onChanged);
     };
-  }, [refetch, soundOn]);
+  }, [refetch]);
 
   function playBeep() {
     try {
@@ -85,13 +91,17 @@ export function KitchenPage() {
     }
   }
 
-  const transition = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: string }) =>
-      api.patch(`/staff/orders/${id}/status`, { status }),
+  // Chef-driven transitions only: QUEUED -> PREPARING -> READY.
+  const setItemStatus = useMutation({
+    mutationFn: ({ itemId, status }: { itemId: string; status: OrderItemStatus }) =>
+      api.patch(`/staff/order-items/${itemId}/status`, { status }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["kitchen-orders"] }),
   });
 
-  const orders = data?.orders ?? [];
+  const activeFilter = FILTERS.find((f) => f.key === filter) ?? FILTERS[0];
+  const orders = (data?.orders ?? [])
+    .map((o) => ({ ...o, items: o.items.filter((it) => activeFilter.match.includes(it.status)) }))
+    .filter((o) => o.items.length > 0);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -120,7 +130,7 @@ export function KitchenPage() {
           <button
             key={f.key}
             className={`badge whitespace-nowrap ${filter === f.key ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
-            onClick={() => { setFilter(f.key); refetch(); }}
+            onClick={() => setFilter(f.key)}
           >
             {f.label}
           </button>
@@ -129,11 +139,11 @@ export function KitchenPage() {
       </nav>
 
       <main className="p-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {!orders.length && <div className="p-8 text-center text-slate-500 col-span-full">No orders in this view.</div>}
+        {!orders.length && <div className="p-8 text-center text-slate-500 col-span-full">No dishes in this view.</div>}
         {orders.map((o) => {
           const mins = minutesSince(o.createdAt);
           return (
-            <div key={o.id} className={`card border-l-4 ${STATUS_COLOR[o.status] ?? ""} p-3`}>
+            <div key={o.id} className="card border-l-4 border-l-slate-400 p-3">
               <div className="flex justify-between items-start">
                 <div>
                   <div className="text-xl font-bold">Table {o.table.number}</div>
@@ -144,41 +154,46 @@ export function KitchenPage() {
                   <div className="text-xs text-slate-500 mt-1">{o.status}</div>
                 </div>
               </div>
-              <ul className="mt-2 space-y-1">
+              <ul className="mt-2 space-y-2">
                 {o.items.map((it) => (
-                  <li key={it.id} className="text-sm">
-                    <span className="font-semibold">{it.quantity}× {it.nameSnapshot}</span>
-                    {it.addons.length > 0 && (
-                      <span className="text-slate-500"> + {it.addons.map((a) => a.nameSnapshot).join(", ")}</span>
-                    )}
-                    {it.specialInstructions && (
-                      <div className="text-amber-700 text-xs mt-0.5">✎ {it.specialInstructions}</div>
-                    )}
+                  <li key={it.id} className="border-t pt-2 first:border-t-0 first:pt-0">
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="min-w-0">
+                        <span className="font-semibold">{it.quantity}× {it.nameSnapshot}</span>
+                        {it.addons.length > 0 && (
+                          <span className="text-slate-500"> + {it.addons.map((a) => a.nameSnapshot).join(", ")}</span>
+                        )}
+                        {it.specialInstructions && (
+                          <div className="text-amber-700 text-xs mt-0.5">✎ {it.specialInstructions}</div>
+                        )}
+                      </div>
+                      <span className={`badge whitespace-nowrap ${ITEM_STYLE[it.status]}`}>{it.status}</span>
+                    </div>
+                    <div className="flex gap-2 mt-1.5">
+                      {it.status === "QUEUED" && (
+                        <button
+                          className="btn btn-accent text-xs !py-1"
+                          disabled={setItemStatus.isPending}
+                          onClick={() => setItemStatus.mutate({ itemId: it.id, status: "PREPARING" })}
+                        >
+                          Start preparing
+                        </button>
+                      )}
+                      {it.status === "PREPARING" && (
+                        <button
+                          className="btn btn-primary text-xs !py-1 !bg-green-600"
+                          disabled={setItemStatus.isPending}
+                          onClick={() => setItemStatus.mutate({ itemId: it.id, status: "READY" })}
+                        >
+                          Mark ready
+                        </button>
+                      )}
+                      {it.status === "READY" && <span className="text-xs text-green-700 font-semibold">✓ Waiting for pickup</span>}
+                    </div>
                   </li>
                 ))}
               </ul>
-              <div className="flex gap-2 mt-3">
-                {o.status === "PENDING" && (
-                  <button className="btn btn-primary flex-1 text-sm" onClick={() => transition.mutate({ id: o.id, status: "ACCEPTED" })}>
-                    Accept
-                  </button>
-                )}
-                {o.status === "ACCEPTED" && (
-                  <button className="btn btn-accent flex-1 text-sm" onClick={() => transition.mutate({ id: o.id, status: "PREPARING" })}>
-                    Start preparing
-                  </button>
-                )}
-                {o.status === "PREPARING" && (
-                  <button className="btn btn-primary flex-1 text-sm !bg-green-600" onClick={() => transition.mutate({ id: o.id, status: "READY" })}>
-                    Mark ready
-                  </button>
-                )}
-                {o.status !== "SERVED" && o.status !== "CANCELLED" && (
-                  <button className="btn btn-ghost text-sm" onClick={() => transition.mutate({ id: o.id, status: "CANCELLED" })}>
-                    Cancel
-                  </button>
-                )}
-              </div>
+              <div className="text-xs text-slate-400 mt-2">Order total {formatMoney(o.totalMinor)}</div>
             </div>
           );
         })}

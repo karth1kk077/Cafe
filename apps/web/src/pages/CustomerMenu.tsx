@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, formatMoney, type PublicMenuResponse, type TableResponse } from "../lib/api";
 import { SOCKET_EVENTS, getSocket } from "../lib/socket";
+import { saveSession, loadSession } from "../lib/session";
 
 interface CartLine {
   key: string;
@@ -47,19 +48,33 @@ export function CustomerMenu() {
   const { data: sessionOrders, refetch: refetchOrders } = useQuery({
     queryKey: ["session-orders", tableInfo?.session?.id],
     enabled: !!tableInfo?.session?.id,
-    queryFn: () => api.get(`/public/sessions/${tableInfo!.session!.id}/orders`),
+    queryFn: () => api.get(`/public/sessions/${tableInfo!.session!.id}/orders`, tableInfo!.sessionToken),
   });
 
+  // Persist the session-scoped token so tracking screens share the credential.
   useEffect(() => {
-    const socket = getSocket();
+    if (!tableInfo) return;
+    saveSession(
+      tableCode,
+      tableInfo.session && tableInfo.sessionToken
+        ? { token: tableInfo.sessionToken, sessionId: tableInfo.session.id }
+        : null
+    );
+  }, [tableInfo, tableCode]);
+
+  useEffect(() => {
+    const token = tableInfo?.sessionToken ?? loadSession(tableCode)?.token ?? undefined;
+    const socket = getSocket(token);
     const onOrder = () => refetchOrders();
-    socket.on(SOCKET_EVENTS.ORDER_STATUS, onOrder);
+    socket.on(SOCKET_EVENTS.ORDER_UPDATED, onOrder);
+    socket.on(SOCKET_EVENTS.ITEM_STATUS, onOrder);
     socket.on(SOCKET_EVENTS.SESSION_CLOSED, onOrder);
     return () => {
-      socket.off(SOCKET_EVENTS.ORDER_STATUS, onOrder);
+      socket.off(SOCKET_EVENTS.ORDER_UPDATED, onOrder);
+      socket.off(SOCKET_EVENTS.ITEM_STATUS, onOrder);
       socket.off(SOCKET_EVENTS.SESSION_CLOSED, onOrder);
     };
-  }, [refetchOrders]);
+  }, [refetchOrders, tableInfo?.sessionToken, tableCode]);
 
   const sessionId = tableInfo?.session?.id;
   const canOrder = tableInfo?.canOrder;
@@ -70,7 +85,7 @@ export function CustomerMenu() {
   );
 
   const orderMutation = useMutation({
-    mutationFn: (payload: unknown) => api.post("/public/orders", payload),
+    mutationFn: (payload: unknown) => api.post("/public/orders", payload, tableInfo?.sessionToken ?? null),
     onSuccess: () => {
       setCart([]);
       setOrderError(null);
@@ -129,7 +144,6 @@ export function CustomerMenu() {
     if (!cart.length) return;
     setOrderError(null);
     const payload = {
-      tableCode,
       idempotencyKey: newIdempotencyKey(),
       items: cart.map((l) => ({
         menuItemId: l.menuItemId,
