@@ -22,6 +22,15 @@ const orderLimiter = rateLimit({
   message: { error: { code: "RATE_LIMITED", message: "Too many requests. Please slow down." } },
 });
 
+// QR lookups are unauthenticated, so they share the general request budget.
+const tableLookupLimiter = rateLimit({
+  windowMs: config.RATE_LIMIT_WINDOW_MS,
+  max: config.RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: { code: "RATE_LIMITED", message: "Too many requests. Please slow down." } },
+});
+
 publicRouter.get(
   "/menu",
   asyncHandler(async (_req, res) => {
@@ -32,14 +41,15 @@ publicRouter.get(
 
 // Resolve a table + its active session from an unpredictable QR token. When a
 // session is orderable, mint a session-scoped token the customer uses for the
-// rest of their visit (spec 6.1).
+// rest of their visit (spec 6.1). No internal IDs or admin data in the payload.
 publicRouter.get(
   "/tables/:tableCode",
+  tableLookupLimiter,
   asyncHandler(async (req, res) => {
     const { table, activeSession } = await resolveTableByCode(String(req.params.tableCode));
     const canOrder = activeSession?.status === "ACTIVE";
     res.json({
-      table: { id: table.id, number: table.number, status: table.status },
+      table: { number: table.number, status: table.status },
       session: activeSession
         ? { id: activeSession.id, status: activeSession.status, openedAt: activeSession.openedAt }
         : null,

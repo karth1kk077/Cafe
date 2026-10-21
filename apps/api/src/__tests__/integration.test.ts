@@ -614,3 +614,98 @@ describe("concurrency", () => {
     await closeSessionClean(sessionId);
   });
 });
+
+describe("admin tables & QR codes", () => {
+  function createTable(number: string, extra: Record<string, unknown> = {}) {
+    return request(app)
+      .post("/api/staff/tables")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ number, ...extra });
+  }
+
+  it("serves the admin QR metadata list to admins only", async () => {
+    const denied = await request(app)
+      .get("/api/staff/admin/tables")
+      .set("Authorization", `Bearer ${waiterToken}`);
+    expect(denied.status).toBe(403);
+
+    const ok = await request(app)
+      .get("/api/staff/admin/tables")
+      .set("Authorization", `Bearer ${adminToken}`);
+    expect(ok.status).toBe(200);
+    const row = ok.body.tables.find((t: { id: string }) => t.id === tableId);
+    expect(row).toBeTruthy();
+    expect(row.qrToken).toBe(tableToken);
+    // QR URL comes from the configured public base URL, never a hard-coded host.
+    expect(row.qrUrl).toMatch(/^https?:\/\//);
+    expect(row.qrUrl.endsWith(`/t/${tableToken}`)).toBe(true);
+  });
+
+  it("creates a table with a unique QR token, trims its number, and audits it", async () => {
+    const number = `QR-${Date.now()}`;
+    const res = await createTable(`  ${number}  `, { seats: 2 });
+    expect(res.status).toBe(201);
+    expect(res.body.table.number).toBe(number);
+    expect(res.body.table.seats).toBe(2);
+    expect(res.body.table.qrToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(res.body.table.qrUrl.endsWith(`/t/${res.body.table.qrToken}`)).toBe(true);
+
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: "TABLE_CREATED", entityId: res.body.table.id },
+    });
+    expect(audit).toBeTruthy();
+    await prisma.cafeTable.delete({ where: { id: res.body.table.id } });
+  });
+
+  it("rejects blank, duplicate (case-insensitive), and conflicting rename labels", async () => {
+    const blank = await createTable("   ");
+    expect(blank.status).toBe(422);
+    expect(blank.body.error.code).toBe("VALIDATION_ERROR");
+
+    const number = `dup-${Date.now()}`;
+    const a = await createTable(number);
+    expect(a.status).toBe(201);
+
+    const dup = await createTable(number.toUpperCase());
+    expect(dup.status).toBe(409);
+    expect(dup.body.error.code).toBe("DUPLICATE");
+
+    // Renaming a different table onto an existing label is rejected too.
+    const b = await createTable(`other-${Date.now()}`);
+    expect(b.status).toBe(201);
+    const clash = await request(app)
+      .patch(`/api/staff/tables/${b.body.table.id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ number: number.toUpperCase() });
+    expect(clash.status).toBe(409);
+    expect(clash.body.error.code).toBe("DUPLICATE");
+
+    await prisma.cafeTable.delete({ where: { id: b.body.table.id } });
+    await prisma.cafeTable.delete({ where: { id: a.body.table.id } });
+  });
+
+  it("stops resolving a QR link when the table is deactivated", async () => {
+    const created = await createTable(`off-${Date.now()}`);
+    expect(created.status).toBe(201);
+    const token = created.body.table.qrToken as string;
+
+    const before = await request(app).get(`/api/public/tables/${token}`);
+    expect(before.status).toBe(200);
+
+    const off = await request(app)
+      .patch(`/api/staff/tables/${created.body.table.id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ isActive: false });
+    expect(off.status).toBe(200);
+
+    const after = await request(app).get(`/api/public/tables/${token}`);
+    expect(after.status).toBe(404);
+    expect(after.body.error.code).toBe("NOT_FOUND");
+
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: "TABLE_DEACTIVATED", entityId: created.body.table.id },
+    });
+    expect(audit).toBeTruthy();
+    await prisma.cafeTable.delete({ where: { id: created.body.table.id } });
+  });
+});

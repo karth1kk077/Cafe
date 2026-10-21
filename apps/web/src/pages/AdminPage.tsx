@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, formatMoney } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { TablesQrPanel } from "../components/TablesQrPanel";
 
 interface User {
   id: string;
@@ -18,7 +19,7 @@ interface AuditLog {
   createdAt: string;
 }
 
-const TABS = ["Staff", "Menu", "Audit", "Settings"] as const;
+const TABS = ["Staff", "Tables & QR", "Menu", "Audit", "Settings"] as const;
 
 export function AdminPage() {
   const queryClient = useQueryClient();
@@ -78,27 +79,33 @@ export function AdminPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-20 bg-slate-900 text-white px-4 py-3 flex items-center justify-between">
-        <div>
-          <div className="text-lg font-bold">Admin</div>
-          <div className="text-xs opacity-70">{user?.name}</div>
-        </div>
-        <button className="btn btn-ghost !text-white !border-white/30 text-sm" onClick={() => { logout(); location.href = "/login"; }}>Exit</button>
-      </header>
+      {/* Header + tab bar stick together so the tab bar can't slide under the
+          header on narrow screens. */}
+      <div className="sticky top-0 z-20 print:hidden">
+        <header className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between">
+          <div>
+            <div className="text-lg font-bold">Admin</div>
+            <div className="text-xs opacity-70">{user?.name}</div>
+          </div>
+          <button className="btn btn-ghost !text-white !border-white/30 text-sm" onClick={() => { logout(); location.href = "/login"; }}>Exit</button>
+        </header>
 
-      <nav className="sticky top-[64px] z-10 flex gap-2 overflow-x-auto bg-white border-b px-3 py-2">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            className={`badge whitespace-nowrap ${tab === t ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
-            onClick={() => setTab(t)}
-          >
-            {t}
-          </button>
-        ))}
-      </nav>
+        <nav className="flex gap-2 overflow-x-auto bg-white border-b px-3 py-2">
+          {TABS.map((t) => (
+            <button
+              key={t}
+              className={`chip whitespace-nowrap ${tab === t ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+              onClick={() => setTab(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </nav>
+      </div>
 
       <main className="p-3">
+        {tab === "Tables & QR" && <TablesQrPanel />}
+
         {tab === "Staff" && (
           <div className="space-y-4">
             <div className="card p-3 space-y-2">

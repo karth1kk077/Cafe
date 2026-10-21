@@ -124,7 +124,7 @@ export function OrderTracking() {
       </main>
 
       {sessionStatus === "ACTIVE" && (
-        <div className="fixed bottom-0 inset-x-0 z-30 bg-white border-t p-3 flex gap-2">
+        <div className="fixed bottom-0 inset-x-0 z-30 bg-white border-t p-3 pb-safe flex gap-2">
           <button className="btn btn-ghost flex-1" onClick={() => assistance.mutate()} disabled={assistance.isPending}>
             Call waiter
           </button>
@@ -134,17 +134,17 @@ export function OrderTracking() {
         </div>
       )}
       {sessionStatus === "BILL_REQUESTED" && (
-        <div className="fixed bottom-0 inset-x-0 z-30 bg-amber-50 border-t border-amber-200 p-3 text-center text-amber-800">
+        <div className="fixed bottom-0 inset-x-0 z-30 bg-amber-50 border-t border-amber-200 p-3 pb-safe text-center text-amber-800">
           Bill requested. A waiter will assist you shortly.
         </div>
       )}
       {sessionStatus === "CLOSED" && (
-        <div className="fixed bottom-0 inset-x-0 z-30 bg-slate-100 border-t p-3 text-center text-slate-600">
+        <div className="fixed bottom-0 inset-x-0 z-30 bg-slate-100 border-t p-3 pb-safe text-center text-slate-600">
           This session is closed. Thank you!
         </div>
       )}
       {sessionStatus === "PAYMENT_PENDING" && (
-        <div className="fixed bottom-0 inset-x-0 z-30 bg-orange-50 border-t border-orange-200 p-3 text-center text-orange-800">
+        <div className="fixed bottom-0 inset-x-0 z-30 bg-orange-50 border-t border-orange-200 p-3 pb-safe text-center text-orange-800">
           Payment in progress. A waiter will assist you shortly.
         </div>
       )}

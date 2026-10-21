@@ -11,7 +11,8 @@ import {
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { authenticate, authorize } from "../middleware/auth.js";
 import { prisma } from "../lib/prisma.js";
-import { NotFoundError } from "../lib/errors.js";
+import { ConflictError, NotFoundError } from "../lib/errors.js";
+import { buildTableQrUrl } from "../lib/qr.js";
 import {
   openSession,
   closeSession,
@@ -87,14 +88,42 @@ staffRouter.get(
   })
 );
 
+/**
+ * Table labels are unique per café. The DB constraint catches exact matches
+ * (P2002 -> 409); this check adds the case-insensitive duplicate rule and a
+ * clear message, excluding the table being renamed.
+ */
+async function assertTableNumberAvailable(number: string, excludeTableId?: string) {
+  const existing = await prisma.cafeTable.findFirst({
+    where: {
+      number: { equals: number, mode: "insensitive" },
+      ...(excludeTableId ? { id: { not: excludeTableId } } : {}),
+    },
+    select: { id: true },
+  });
+  if (existing) throw new ConflictError("A table with this number already exists", "DUPLICATE");
+}
+
 staffRouter.post(
   "/tables",
   authorize("ADMIN"),
   asyncHandler(async (req, res) => {
     const body = TableCreateSchema.parse(req.body);
+    await assertTableNumberAvailable(body.number);
     const qrToken = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
-    const table = await prisma.cafeTable.create({ data: { number: body.number, qrToken } });
-    res.status(201).json({ table });
+    const table = await prisma.cafeTable.create({
+      data: { number: body.number, qrToken, ...(body.seats !== undefined ? { seats: body.seats } : {}) },
+    });
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.user!.id,
+        action: "TABLE_CREATED",
+        entityType: "CafeTable",
+        entityId: table.id,
+        metadata: { number: table.number },
+      },
+    });
+    res.status(201).json({ table: { ...table, qrUrl: buildTableQrUrl(table.qrToken) } });
   })
 );
 
@@ -103,14 +132,17 @@ staffRouter.patch(
   "/tables/:tableId",
   authorize("ADMIN"),
   asyncHandler(async (req, res) => {
+    const tableId = String(req.params.tableId);
     const body = z
       .object({
-        number: z.string().min(1).max(20).optional(),
+        number: z.string().trim().min(1).max(20).optional(),
         seats: z.number().int().min(1).max(50).optional(),
         isActive: z.boolean().optional(),
         rotateQr: z.boolean().optional(),
       })
       .parse(req.body);
+
+    if (body.number !== undefined) await assertTableNumberAvailable(body.number, tableId);
 
     const data: Record<string, unknown> = {};
     if (body.number !== undefined) data.number = body.number;
@@ -118,16 +150,24 @@ staffRouter.patch(
     if (body.isActive !== undefined) data.isActive = body.isActive;
     if (body.rotateQr) data.qrToken = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
 
-    const table = await prisma.cafeTable.update({ where: { id: String(req.params.tableId) }, data });
+    const table = await prisma.cafeTable.update({ where: { id: tableId }, data });
+    const action = body.rotateQr
+      ? "TABLE_QR_ROTATED"
+      : body.isActive === false
+        ? "TABLE_DEACTIVATED"
+        : body.isActive === true
+          ? "TABLE_ACTIVATED"
+          : "TABLE_UPDATED";
     await prisma.auditLog.create({
       data: {
         actorId: req.user!.id,
-        action: body.rotateQr ? "TABLE_QR_ROTATED" : "TABLE_UPDATED",
+        action,
         entityType: "CafeTable",
         entityId: table.id,
+        metadata: { number: table.number },
       },
     });
-    res.json({ table });
+    res.json({ table: { ...table, qrUrl: buildTableQrUrl(table.qrToken) } });
   })
 );
 
@@ -295,6 +335,35 @@ staffRouter.patch(
 );
 
 // ---- Admin: menu, staff, settings, audit ----
+
+// Tables with their QR metadata for the Admin -> Tables & QR Codes page.
+// The QR image itself is rendered client-side from `qrUrl`, so no image files
+// are stored (plan 5).
+staffRouter.get(
+  "/admin/tables",
+  authorize("ADMIN"),
+  asyncHandler(async (_req, res) => {
+    const tables = await prisma.cafeTable.findMany({
+      orderBy: { number: "asc" },
+      include: {
+        sessions: {
+          where: { status: { not: "CLOSED" } },
+          orderBy: { openedAt: "desc" },
+          take: 1,
+          select: { id: true, status: true, openedAt: true },
+        },
+      },
+    });
+    res.json({
+      tables: tables.map(({ sessions, ...table }) => ({
+        ...table,
+        qrUrl: buildTableQrUrl(table.qrToken),
+        activeSession: sessions[0] ?? null,
+      })),
+    });
+  })
+);
+
 staffRouter.get(
   "/admin/users",
   authorize("ADMIN"),

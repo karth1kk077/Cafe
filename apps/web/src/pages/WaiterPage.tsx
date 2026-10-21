@@ -56,6 +56,9 @@ export function WaiterPage() {
   const { user, logout } = useAuth();
   const [selected, setSelected] = useState<Table | null>(null);
   const [payAmount, setPayAmount] = useState("");
+  // Surfaced in the table sheet: without this, a rejected action (e.g. closing
+  // with an unpaid bill) looked like the button simply did nothing.
+  const [actionError, setActionError] = useState("");
 
   const { data, refetch } = useQuery<{ tables: Table[] }>({
     queryKey: ["tables"],
@@ -96,23 +99,27 @@ export function WaiterPage() {
 
   const openSession = useMutation({
     mutationFn: (tableId: string) => api.post(`/staff/tables/${tableId}/sessions`),
-    onSuccess: () => refetch(),
+    onSuccess: () => { setActionError(""); refetch(); },
+    onError: (e: Error) => setActionError(e.message),
   });
 
   const closeSession = useMutation({
     mutationFn: (sessionId: string) => api.post(`/staff/sessions/${sessionId}/close`, {}),
-    onSuccess: () => { refetch(); setSelected(null); },
+    onSuccess: () => { setActionError(""); refetch(); setSelected(null); },
+    onError: (e: Error) => { setActionError(e.message); refetch(); },
   });
 
   const generateBill = useMutation({
     mutationFn: (sessionId: string) => api.post("/staff/bills/generate", { sessionId }),
-    onSuccess: () => { refetch(); },
+    onSuccess: () => { setActionError(""); refetch(); },
+    onError: (e: Error) => setActionError(e.message),
   });
 
   const recordPayment = useMutation({
     mutationFn: ({ billId, amountMinor }: { billId: string; amountMinor: number }) =>
       api.post("/staff/payments", { billId, amountMinor, method: "CASH" }),
-    onSuccess: () => { refetch(); setPayAmount(""); },
+    onSuccess: () => { setActionError(""); refetch(); setPayAmount(""); },
+    onError: (e: Error) => setActionError(e.message),
   });
 
   // The waiter's job: collect READY dishes and mark each one SERVED.
@@ -196,7 +203,7 @@ export function WaiterPage() {
                       <div className="text-xs text-slate-400">ready {minutesSince(it.readyAt)}m ago</div>
                     </div>
                     <button
-                      className="btn btn-primary text-xs !py-1"
+                      className="btn btn-primary text-xs !py-2"
                       disabled={serveItem.isPending}
                       onClick={() => serveItem.mutate(it.id)}
                     >
@@ -244,12 +251,21 @@ export function WaiterPage() {
 
       {selected && (
         <div className="fixed inset-0 z-40 bg-black/50 flex items-end sm:items-center justify-center">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-4 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-4 pb-safe max-h-[90dvh] overflow-y-auto">
             <div className="flex justify-between items-center mb-3">
               <h3 className="text-lg font-bold">Table {selected.number}</h3>
-              <button className="btn btn-ghost !px-2" onClick={() => setSelected(null)}>✕</button>
+              <button className="btn btn-ghost !px-3" aria-label="Close" onClick={() => { setSelected(null); setActionError(""); }}>✕</button>
             </div>
             <div className="text-sm text-slate-600 mb-3">Status: {selected.status}</div>
+
+            {actionError && (
+              <div className="mb-3 flex items-start justify-between gap-3 rounded-lg bg-red-50 text-red-700 px-3 py-2 text-sm">
+                <span>{actionError}</span>
+                <button className="shrink-0 self-start rounded-md p-2 font-bold" aria-label="Dismiss message" onClick={() => setActionError("")}>
+                  ✕
+                </button>
+              </div>
+            )}
 
             {!selected.sessions[0] && selected.status === "AVAILABLE" && (
               <button className="btn btn-primary w-full" onClick={() => openSession.mutate(selected.id)} disabled={openSession.isPending}>
@@ -273,13 +289,13 @@ export function WaiterPage() {
                           <div className="flex items-center gap-2 shrink-0">
                             <span className={`badge ${ITEM_STYLE[it.status]}`}>{it.status}</span>
                             {it.status === "READY" && (
-                              <button className="btn btn-primary !py-0.5 text-xs" disabled={serveItem.isPending} onClick={() => serveItem.mutate(it.id)}>
+                              <button className="btn btn-primary !py-2 text-xs" disabled={serveItem.isPending} onClick={() => serveItem.mutate(it.id)}>
                                 Served
                               </button>
                             )}
                             {(it.status === "QUEUED" || it.status === "PREPARING") && (
                               <button
-                                className="btn btn-ghost !py-0.5 text-xs"
+                                className="btn btn-ghost !py-2 text-xs"
                                 disabled={cancelItem.isPending}
                                 onClick={() => {
                                   const reason = window.prompt("Reason for cancelling this item?") ?? "";
@@ -310,10 +326,16 @@ export function WaiterPage() {
                       <span className="font-semibold">Bill total</span>
                       <span>{formatMoney(b.totalMinor)}</span>
                     </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {b.status === "PARTIAL"
+                        ? "Partly paid · the exact amount due is on the printed bill."
+                        : "Unpaid · enter the amount collected below."}
+                    </div>
                     <div className="flex gap-2 mt-2">
                       <input
                         className="input flex-1"
-                        placeholder="Amount (minor)"
+                        inputMode="numeric"
+                        placeholder="Amount (paise)"
                         value={payAmount}
                         onChange={(e) => setPayAmount(e.target.value)}
                       />
@@ -325,7 +347,9 @@ export function WaiterPage() {
                         Record payment
                       </button>
                     </div>
-                    <div className="text-xs text-slate-500 mt-1">Enter amount in minor units (paise). Full = {b.totalMinor}.</div>
+                    <div className="text-xs text-amber-700 mt-2">
+                      The session can only close once this bill is PAID.
+                    </div>
                   </div>
                 ))}
               </div>

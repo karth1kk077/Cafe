@@ -23,11 +23,22 @@ token's `sessionId`, and rejects requests whose token session does not match the
 holding a token for a **closed** session is rejected with `409 SESSION_CLOSED`, so a stale tab or
 saved QR cannot silently order into the next session at the same table.
 
+## Table QR codes
+
+Each `CafeTable` carries a unique, unpredictable `qrToken` (64 hex chars, generated server-side at
+creation, rotatable by an admin). The QR encodes `{PUBLIC_APP_BASE_URL}/t/<qrToken>` — a configured
+public base URL (`PUBLIC_APP_BASE_URL`, defaulting to `WEB_ORIGIN`), never a hard-coded host, and
+never internal IDs, status, or any authorization claim. Admin table endpoints return a ready-made
+`qrUrl`; the web app renders the QR image client-side from it (`qrcode`), so no image files are
+stored. The token is stable for the life of the table unless rotated, and rotation invalidates the
+old link (the physical code must be reprinted). The QR identifies the table only: ordering
+eligibility is re-checked server-side on every lookup and every order submission.
+
 ## Public (`/api/public`)
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
 | GET | `/menu` | public | categories + items + variants + addons + settings |
-| GET | `/tables/:tableCode` | public | resolve QR token -> `{table, session, canOrder, sessionToken}` |
+| GET | `/tables/:tableCode` | public | resolve QR token -> `{table, session, canOrder, sessionToken}`; rate-limited (`RATE_LIMIT_MAX`); payload carries no internal IDs (404 for unknown/inactive tokens) |
 | POST | `/orders` | `x-session-token` | create order; body `{idempotencyKey, items[]}` (no table/session/client prices); 409 `SESSION_CLOSED`; prices computed server-side |
 | GET | `/orders/:orderId` | `x-session-token` | order + per-item status (404 if not in the token's session) |
 | GET | `/sessions/:sessionId/orders` | `x-session-token` | all orders for the authorized session |
@@ -41,8 +52,9 @@ Client-sent prices/totals are ignored.
 | Method | Path | Role | Notes |
 |--------|------|------|-------|
 | GET | `/tables` | any staff | tables + active session + open order items |
-| POST | `/tables` | ADMIN | create table (generates QR token) |
-| PATCH | `/tables/:tableId` | ADMIN | update number/seats/isActive; `{rotateQr:true}` rotates the QR token |
+| POST | `/tables` | ADMIN | create table; trimmed number, seats optional; 422 validation, 409 `DUPLICATE` (case-insensitive); generates QR token, returns `{table, qrUrl}`, audited `TABLE_CREATED` |
+| PATCH | `/tables/:tableId` | ADMIN | update number/seats/isActive (same validation); `{rotateQr:true}` rotates the QR token; returns `qrUrl`; audited (`TABLE_UPDATED`/`TABLE_DEACTIVATED`/`TABLE_ACTIVATED`/`TABLE_QR_ROTATED`) |
+| GET | `/admin/tables` | ADMIN | table list with QR metadata: `qrToken`, `qrUrl`, `activeSession`, timestamps |
 | POST | `/tables/:tableId/sessions` | WAITER/ADMIN | open session (409 if one active) |
 | GET | `/sessions/:sessionId` | WAITER/ADMIN | session detail |
 | POST | `/sessions/:sessionId/close` | WAITER/ADMIN | 409 `UNPAID_BALANCE` / `UNRESOLVED_ORDERS` |

@@ -105,38 +105,42 @@ export function KitchenPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-20 bg-slate-900 text-white px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-lg font-bold">Kitchen</div>
-            <div className="text-xs opacity-70">{user?.name}</div>
+      {/* Header + filter bar stick together so they never overlap, whatever
+          the header's height ends up being. */}
+      <div className="sticky top-0 z-20">
+        <header className="bg-slate-900 text-white px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-lg font-bold">Kitchen</div>
+              <div className="text-xs opacity-70">{user?.name}</div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                className={`chip ${soundOn ? "!bg-green-600 text-white" : "bg-slate-700 text-slate-300"}`}
+                onClick={() => setSoundOn((s) => !s)}
+              >
+                🔔 {soundOn ? "On" : "Off"}
+              </button>
+              <button className="btn btn-ghost !text-white !border-white/30 text-sm" onClick={() => { logout(); location.href = "/login"; }}>
+                Exit
+              </button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <button
-              className={`badge ${soundOn ? "!bg-green-600 text-white" : "bg-slate-700 text-slate-300"}`}
-              onClick={() => setSoundOn((s) => !s)}
-            >
-              🔔 {soundOn ? "On" : "Off"}
-            </button>
-            <button className="btn btn-ghost !text-white !border-white/30 text-sm" onClick={() => { logout(); location.href = "/login"; }}>
-              Exit
-            </button>
-          </div>
-        </div>
-      </header>
+        </header>
 
-      <nav className="sticky top-[64px] z-10 flex gap-2 overflow-x-auto bg-white border-b px-3 py-2">
-        {FILTERS.map((f) => (
-          <button
-            key={f.key}
-            className={`badge whitespace-nowrap ${filter === f.key ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
-            onClick={() => setFilter(f.key)}
-          >
-            {f.label}
-          </button>
-        ))}
-        <button className="btn btn-ghost !py-0.5 text-xs" onClick={() => refetch()}>↻ Refresh</button>
-      </nav>
+        <nav className="flex gap-2 overflow-x-auto bg-white border-b px-3 py-2">
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              className={`chip whitespace-nowrap ${filter === f.key ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+              onClick={() => setFilter(f.key)}
+            >
+              {f.label}
+            </button>
+          ))}
+          <button className="btn btn-ghost text-xs" onClick={() => refetch()}>↻ Refresh</button>
+        </nav>
+      </div>
 
       <main className="p-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {!orders.length && <div className="p-8 text-center text-slate-500 col-span-full">No dishes in this view.</div>}
@@ -172,7 +176,7 @@ export function KitchenPage() {
                     <div className="flex gap-2 mt-1.5">
                       {it.status === "QUEUED" && (
                         <button
-                          className="btn btn-accent text-xs !py-1"
+                          className="btn btn-accent text-xs !py-2"
                           disabled={setItemStatus.isPending}
                           onClick={() => setItemStatus.mutate({ itemId: it.id, status: "PREPARING" })}
                         >
@@ -181,7 +185,7 @@ export function KitchenPage() {
                       )}
                       {it.status === "PREPARING" && (
                         <button
-                          className="btn btn-primary text-xs !py-1 !bg-green-600"
+                          className="btn btn-primary text-xs !py-2 !bg-green-600"
                           disabled={setItemStatus.isPending}
                           onClick={() => setItemStatus.mutate({ itemId: it.id, status: "READY" })}
                         >

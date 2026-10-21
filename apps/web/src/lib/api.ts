@@ -66,7 +66,8 @@ export interface PublicMenuResponse {
 }
 
 export interface TableResponse {
-  table: { id: string; number: string; status: string };
+  /** Internal IDs are never exposed on public endpoints. */
+  table: { number: string; status: string };
   session: { id: string; status: string; openedAt: string } | null;
   canOrder: boolean;
   /** Present only when the table has an orderable session. */

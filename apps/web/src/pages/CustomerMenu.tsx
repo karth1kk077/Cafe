@@ -161,44 +161,48 @@ export function CustomerMenu() {
 
   return (
     <div className="min-h-screen pb-40">
-      <header className="sticky top-0 z-20 bg-slate-900 text-white px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm opacity-70">{menu?.settings.cafeName ?? "Smart Café"}</div>
-            <div className="text-lg font-bold">Table {tableInfo?.table.number ?? "…"}</div>
+      {/* Header + category bar stick together, so the bar never slides under
+          the header when the "ordering closed" banner makes it taller. */}
+      <div className="sticky top-0 z-20">
+        <header className="bg-slate-900 text-white px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm opacity-70">{menu?.settings.cafeName ?? "Smart Café"}</div>
+              <div className="text-lg font-bold">Table {tableInfo?.table.number ?? "…"}</div>
+            </div>
+            <div className="flex gap-2">
+              <Link to={`/t/${tableCode}/orders`} className="btn btn-ghost !text-white !border-white/30 text-sm">
+                My Orders
+              </Link>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <Link to={`/t/${tableCode}/orders`} className="btn btn-ghost !text-white !border-white/30 text-sm">
-              My Orders
-            </Link>
-          </div>
-        </div>
-        {!canOrder && (
-          <div className="mt-2 rounded-lg bg-orange-600/20 border border-orange-400/40 px-3 py-2 text-sm">
-            {tableInfo?.session
-              ? "Ordering is closed for this table. Please see a waiter for the bill."
-              : "No active session at this table. Please ask a waiter to open your table."}
-          </div>
-        )}
-      </header>
+          {!canOrder && (
+            <div className="mt-2 rounded-lg bg-orange-600/20 border border-orange-400/40 px-3 py-2 text-sm">
+              {tableInfo?.session
+                ? "Ordering is closed for this table. Please see a waiter for the bill."
+                : "No active session at this table. Please ask a waiter to open your table."}
+            </div>
+          )}
+        </header>
 
-      <nav className="sticky top-[72px] z-10 flex gap-2 overflow-x-auto bg-white border-b px-3 py-2">
-        <button
-          className={`badge whitespace-nowrap ${activeCat === null ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
-          onClick={() => setActiveCat(null)}
-        >
-          All
-        </button>
-        {categories.map((c) => (
+        <nav className="flex gap-2 overflow-x-auto bg-white border-b px-3 py-2">
           <button
-            key={c.id}
-            className={`badge whitespace-nowrap ${activeCat === c.id ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
-            onClick={() => setActiveCat(c.id)}
+            className={`chip whitespace-nowrap ${activeCat === null ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+            onClick={() => setActiveCat(null)}
           >
-            {c.name}
+            All
           </button>
-        ))}
-      </nav>
+          {categories.map((c) => (
+            <button
+              key={c.id}
+              className={`chip whitespace-nowrap ${activeCat === c.id ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+              onClick={() => setActiveCat(c.id)}
+            >
+              {c.name}
+            </button>
+          ))}
+        </nav>
+      </div>
 
       <main className="p-3 space-y-4">
         {shown.map((cat) => (
@@ -243,7 +247,7 @@ export function CustomerMenu() {
       </main>
 
       {cart.length > 0 && (
-        <div className="fixed bottom-0 inset-x-0 z-30 bg-white border-t p-3">
+        <div className="fixed bottom-0 inset-x-0 z-30 bg-white border-t p-3 pb-safe">
           <div className="flex justify-between text-sm text-slate-600 mb-2">
             <span>{cart.reduce((s, l) => s + l.quantity, 0)} items</span>
             <span>Subtotal {formatMoney(subtotal)}</span>
@@ -258,9 +262,21 @@ export function CustomerMenu() {
                     {l.variantName ? ` (${l.variantName})` : ""}
                   </span>
                   <div className="flex items-center gap-2">
-                    <button className="btn btn-ghost !px-2 !py-0.5" onClick={() => changeQty(l.key, -1)}>−</button>
+                    <button
+                      className="btn btn-ghost !px-3 !py-2"
+                      aria-label={`Remove one ${l.name}`}
+                      onClick={() => changeQty(l.key, -1)}
+                    >
+                      −
+                    </button>
                     <span>{l.quantity}</span>
-                    <button className="btn btn-ghost !px-2 !py-0.5" onClick={() => changeQty(l.key, 1)}>+</button>
+                    <button
+                      className="btn btn-ghost !px-3 !py-2"
+                      aria-label={`Add one ${l.name}`}
+                      onClick={() => changeQty(l.key, 1)}
+                    >
+                      +
+                    </button>
                   </div>
                 </div>
               ))}
@@ -278,10 +294,10 @@ export function CustomerMenu() {
 
       {customizing && (
         <div className="fixed inset-0 z-40 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-4 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-4 pb-safe max-h-[90dvh] overflow-y-auto">
             <div className="flex justify-between items-start mb-3">
               <h3 className="text-lg font-bold">{customizing.name}</h3>
-              <button className="btn btn-ghost !px-2" onClick={() => setCustomizing(null)}>✕</button>
+              <button className="btn btn-ghost !px-3" aria-label="Close" onClick={() => setCustomizing(null)}>✕</button>
             </div>
             {customizing.variants.length > 0 && (
               <div className="mb-3">
@@ -290,7 +306,7 @@ export function CustomerMenu() {
                   {customizing.variants.map((v) => (
                     <button
                       key={v.id}
-                      className={`badge ${customVariant === v.id ? "!bg-slate-900 text-white" : "bg-slate-100"}`}
+                      className={`chip ${customVariant === v.id ? "!bg-slate-900 text-white" : "bg-slate-100"}`}
                       onClick={() => setCustomVariant(v.id)}
                     >
                       {v.name} {v.priceDeltaMinor ? `+${formatMoney(v.priceDeltaMinor)}` : ""}

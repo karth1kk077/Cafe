@@ -39,6 +39,21 @@ Seeded staff (password `Password123!`): admin@cafe.local, waiter@cafe.local, che
 - [ ] Edit café settings (name/tax) reflected in customer menu totals.
 - [ ] Rotate a table's QR token → the old printed QR no longer resolves.
 
+## Admin → Tables & QR Codes
+- [ ] Open Admin → "Tables & QR" → table list loads (number, seats, status, active/inactive, QR ready).
+- [ ] Add a table → QR preview opens automatically with table label + destination URL.
+- [ ] Add a duplicate number in different case (e.g. `t1` vs `T1`) → rejected with a clear message;
+      blank/whitespace-only numbers are rejected too.
+- [ ] Edit a table's number/seats → list updates; renaming onto an existing number is rejected.
+- [ ] Search + status filter narrow the list; empty state offers Add table; API failure shows Retry.
+- [ ] Copy link → clipboard holds `<base>/t/<token>`; paste matches the printed destination URL.
+- [ ] Download PNG → file opens/scans; Download SVG → valid vector, also scans.
+- [ ] Print → sheet shows café name, table number, and QR only (no admin nav/rows); scan the printed
+      sheet with a phone camera → opens the customer menu for that table with no app install.
+- [ ] Deactivate a table (confirm dialog) → its QR link returns "not found"; reactivate restores it.
+- [ ] Rotate QR (confirm dialog warns about reprint) → old printed QR stops resolving.
+- [ ] Confirm the QR URL honours `PUBLIC_APP_BASE_URL` when set (not the hard-coded dev host).
+
 ## Critical security/correctness
 - [ ] With a session closed, reuse the old QR link / open tab (stale session token) → ordering
       rejected server-side with `SESSION_CLOSED`.
@@ -53,3 +68,21 @@ Seeded staff (password `Password123!`): admin@cafe.local, waiter@cafe.local, che
 - [ ] Bill totals match the sum of non-cancelled items including tax/rounding.
 - [ ] Cancelled dishes are excluded from the bill.
 - [ ] Recording a partial payment leaves the bill PARTIAL; overpayment is rejected.
+
+## Mobile layout (~360 px width, or a real phone)
+Run every surface below in a narrow browser window or on a phone.
+- [ ] No page scrolls horizontally at any point.
+- [ ] Pinch zoom still works (the viewport no longer locks scaling).
+- [ ] Customer menu: category bar sticks directly under the header while scrolling — including when
+      the "ordering closed" banner is shown; cart +/- steppers and "Add" buttons are easy to tap;
+      the customizer sheet fits the screen and its content scrolls.
+- [ ] Order tracking: the bottom "Call waiter / Request bill" bar sits above the home indicator on
+      notched phones and never covers the last order card.
+- [ ] Kitchen: filter chips are comfortable to tap; "Start preparing"/"Mark ready" buttons are not
+      cramped; the filter bar never slides under the header.
+- [ ] Waiter: table grid shows two columns; the table sheet reaches the bottom edge cleanly;
+      Served/Cancel buttons in the sheet are tappable.
+- [ ] Admin: tab bar (Staff/Tables & QR/Menu/Audit/Settings) scrolls sideways if needed and sticks
+      under the header; Tables & QR row buttons (View QR/Copy/Edit/Deactivate) are comfortable.
+- [ ] Any form (login, admin, customizer notes): focusing a text field does NOT auto-zoom the page
+      on iOS Safari.

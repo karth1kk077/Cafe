@@ -41,7 +41,10 @@ export const LoginSchema = z.object({
 });
 
 export const TableCreateSchema = z.object({
-  number: z.string().min(1).max(20),
+  // Trimmed so " 4 " and "4" are the same label; uniqueness (including
+  // case-insensitive duplicates) is enforced server-side on create/rename.
+  number: z.string().trim().min(1).max(20),
+  seats: z.number().int().min(1).max(50).optional(),
 });
 
 export const CloseSessionSchema = z.object({

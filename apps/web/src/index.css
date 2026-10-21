@@ -30,6 +30,14 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* Compact variant for dense list rows; must follow .btn to win the cascade. */
+.btn-sm {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  border-radius: 0.6rem;
+  /* Keep compact buttons comfortable to tap on phones. */
+  min-height: 2.25rem;
+}
 .btn-accent {
   background: #c2410c;
   color: white;
@@ -44,7 +52,8 @@ body {
   border: 1px solid #e2e8f0;
   border-radius: 0.75rem;
   padding: 0.6rem 0.9rem;
-  font-size: 0.95rem;
+  /* 16px keeps iOS Safari from auto-zooming the page when a field is focused. */
+  font-size: 1rem;
   background: white;
 }
 .input:focus {
@@ -65,4 +74,41 @@ body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+}
+/* Interactive filter/selector chip: same look as .badge but with a touchable
+   hit area. Use on <button> chips; keep .badge for static status labels. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  padding: 0.5rem 0.9rem;
+  min-height: 2.25rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+/* Bottom padding that clears the home-indicator area on notched phones
+   (env() is 0 on desktop, so this is a no-op there). */
+.pb-safe {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+/* Phone-targeted overrides. Kept in `base` (unlayered), so they beat Tailwind's
+   `utilities` layer regardless of class order — no `!important` needed. */
+
+/* Vue/React sheets and dense rows shrink buttons with `!py-*`; once a button has
+   a min-height, vertical padding is what actually centres the label (the box no
+   longer hugs the content). Redefine the small steps so the text stays inside. */
+@media (max-width: 640px) {
+  .btn {
+    min-height: 2.75rem;
+    padding-block: 0.65rem;
+  }
+  .btn-sm {
+    min-height: 2.5rem;
+    padding-block: 0.5rem;
+  }
 }

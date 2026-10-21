@@ -40,6 +40,10 @@ const EnvSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
   RATE_LIMIT_MAX: z.coerce.number().default(100),
   ORDER_RATE_LIMIT_MAX: z.coerce.number().default(30),
+  // Public origin encoded into table QR codes (e.g. https://cafe.example).
+  // Optional: falls back to WEB_ORIGIN so dev/test need no extra config, but
+  // production should set it explicitly to the URL customers scan.
+  PUBLIC_APP_BASE_URL: z.string().url().optional(),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
@@ -48,5 +52,8 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const config = parsed.data;
+export const config = {
+  ...parsed.data,
+  PUBLIC_APP_BASE_URL: parsed.data.PUBLIC_APP_BASE_URL ?? parsed.data.WEB_ORIGIN,
+};
 export type AppConfig = typeof config;
