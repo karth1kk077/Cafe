@@ -29,10 +29,11 @@ Each `CafeTable` carries a unique, unpredictable `qrToken` (64 hex chars, genera
 creation, rotatable by an admin). The QR encodes `{PUBLIC_APP_BASE_URL}/t/<qrToken>` — a configured
 public base URL (`PUBLIC_APP_BASE_URL`, defaulting to `WEB_ORIGIN`), never a hard-coded host, and
 never internal IDs, status, or any authorization claim. Admin table endpoints return a ready-made
-`qrUrl`; the web app renders the QR image client-side from it (`qrcode`), so no image files are
-stored. The token is stable for the life of the table unless rotated, and rotation invalidates the
-old link (the physical code must be reprinted). The QR identifies the table only: ordering
-eligibility is re-checked server-side on every lookup and every order submission.
+`qrUrl`; the web app renders the QR image client-side from it (`qrcode`, error correction level M),
+so no image files are stored. The token is stable for the life of the table unless rotated, and
+rotation invalidates the old link (the physical code must be reprinted). The QR identifies the
+table only: ordering eligibility is re-checked server-side on every lookup and every order
+submission.
 
 ## Public (`/api/public`)
 | Method | Path | Auth | Notes |

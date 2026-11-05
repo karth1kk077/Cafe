@@ -79,7 +79,14 @@
 - [x] A token for a **closed** session is rejected with `409 SESSION_CLOSED`, so a stale QR page
       cannot order into the next session at the same table.
 - [x] Admin can rotate a table's QR token (`PATCH /staff/tables/:tableId {rotateQr:true}`) to
-      invalidate a leaked print.
+      invalidate a leaked print. The admin UI warns that the stand must be reprinted and opens a
+      print preview for the replacement code.
+- [x] Printable QR codes use error correction level **M** (server-side `qrUrl` unchanged; the image
+      is rendered client-side for preview/download/print). A "Print active QR codes" flow produces an
+      A4 sheet at 6 codes/page.
+- [ ] **Operator risk:** if `PUBLIC_APP_BASE_URL` resolves to `localhost`/`127.0.0.1` or an `http:`
+      origin, the admin panel warns before printing. Printed codes must point at a public HTTPS (or
+      reachable LAN) origin.
 
 ## Deployment hardening (production)
 - [ ] Set `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=none` (if cross-site), strong `JWT_SECRET`/`SESSION_SECRET`.

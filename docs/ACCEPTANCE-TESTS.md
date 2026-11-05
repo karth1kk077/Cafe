@@ -47,11 +47,17 @@ Seeded staff (password `Password123!`): admin@cafe.local, waiter@cafe.local, che
 - [ ] Edit a table's number/seats → list updates; renaming onto an existing number is rejected.
 - [ ] Search + status filter narrow the list; empty state offers Add table; API failure shows Retry.
 - [ ] Copy link → clipboard holds `<base>/t/<token>`; paste matches the printed destination URL.
-- [ ] Download PNG → file opens/scans; Download SVG → valid vector, also scans.
+- [ ] **Test scan** opens the table's `qrUrl` in a new tab and resolves to that table's menu.
+- [ ] Download PNG → file opens/scans; Download SVG → valid vector, also scans (error correction level M).
 - [ ] Print → sheet shows café name, table number, and QR only (no admin nav/rows); scan the printed
       sheet with a phone camera → opens the customer menu for that table with no app install.
+- [ ] **Print active QR codes** generates one A4 print sheet with 6 active-table cards per page
+      (respects the current search/status filter). Each card has the table label and a scannable QR.
+- [ ] If QR URLs resolve to `localhost`/`127.0.0.1` or use `http:`, the panel shows a warning to set
+      `PUBLIC_APP_BASE_URL` to a public HTTPS/LAN address before printing.
 - [ ] Deactivate a table (confirm dialog) → its QR link returns "not found"; reactivate restores it.
-- [ ] Rotate QR (confirm dialog warns about reprint) → old printed QR stops resolving.
+- [ ] Rotate QR (confirm dialog warns about reprint) → old printed QR stops resolving, the new QR
+      preview opens, and the print dialog is offered for the replacement stand.
 - [ ] Confirm the QR URL honours `PUBLIC_APP_BASE_URL` when set (not the hard-coded dev host).
 
 ## Critical security/correctness
@@ -73,16 +79,18 @@ Seeded staff (password `Password123!`): admin@cafe.local, waiter@cafe.local, che
 Run every surface below in a narrow browser window or on a phone.
 - [ ] No page scrolls horizontally at any point.
 - [ ] Pinch zoom still works (the viewport no longer locks scaling).
-- [ ] Customer menu: category bar sticks directly under the header while scrolling — including when
-      the "ordering closed" banner is shown; cart +/- steppers and "Add" buttons are easy to tap;
-      the customizer sheet fits the screen and its content scrolls.
-- [ ] Order tracking: the bottom "Call waiter / Request bill" bar sits above the home indicator on
-      notched phones and never covers the last order card.
+- [ ] Customer menu (QR-first): a bare scan shows "Browse freely — your table opens automatically
+      when you place your first order" and does not occupy the table. Category scroll-spy tabs stick
+      under the header; search filters items; dishes with no variants/add-ons add with one tap; others
+      open the item sheet. The cart sheet slides up, persists across reloads, and the place-order
+      button is reachable above the home indicator.
+- [ ] Order tracking: the stepper reflects per-dish status; haptic/success toast fires when a dish
+      becomes ready; the bottom action bar sits above the home indicator and never covers the last card.
 - [ ] Kitchen: filter chips are comfortable to tap; "Start preparing"/"Mark ready" buttons are not
       cramped; the filter bar never slides under the header.
-- [ ] Waiter: table grid shows two columns; the table sheet reaches the bottom edge cleanly;
+- [ ] Waiter: table grid is usable on a phone; the table sheet reaches the bottom edge cleanly;
       Served/Cancel buttons in the sheet are tappable.
 - [ ] Admin: tab bar (Staff/Tables & QR/Menu/Audit/Settings) scrolls sideways if needed and sticks
-      under the header; Tables & QR row buttons (View QR/Copy/Edit/Deactivate) are comfortable.
+      under the header; Tables & QR row buttons (View QR/Test scan/Copy/Edit/Deactivate) are comfortable.
 - [ ] Any form (login, admin, customizer notes): focusing a text field does NOT auto-zoom the page
       on iOS Safari.

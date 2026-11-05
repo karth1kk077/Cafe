@@ -1,6 +1,6 @@
 # Progress Ledger
 
-## Current phase: Phase 11 — Frictionless ordering & PWA (built and verified)
+## Current phase: QR-first mobile redesign (Phases 1–6, built and verified)
 
 ## Completed
 - **Phase 0** — Requirements/architecture, business rules, DB design, risks, defaults (INR, single café).
@@ -63,6 +63,28 @@
   and kitchen/waiter action buttons enlarged; form inputs bumped to 16 px to stop iOS Safari's
   focus auto-zoom; fixed bottom bars and bottom sheets use a new `.pb-safe`
   (`env(safe-area-inset-bottom)`) so they clear the home indicator; sheets use `90dvh`.
+- **QR-first mobile redesign (commits b8726aa, 4889e00, dcd640f, fd59e96, 3f69f89, 348e694)** —
+  additive, no Prisma migration, no existing public response shapes broken:
+  - **Phase 1 / lazy sessions**: `POST /api/public/tables/:tableCode/session` idempotently
+    opens/joins an `ACTIVE` session (row lock) and promotes legacy `PENDING` rows; closed-session
+    orders still return `409 SESSION_CLOSED`. Dedicated non-login `system+self-service@cafe.local`
+    actor; stricter `SESSION_RATE_LIMIT_MAX`; idle sweep auto-closes customer-opened sessions with
+    zero orders after `CUSTOMER_SESSION_IDLE_TIMEOUT_MS`; realtime `session.opened`. 5 new
+    integration tests (58 total).
+  - **Phase 2 / brand**: warm cafe tokens in `index.css`, Fraunces + DM Sans self-hosted via
+    Fontsource, staff token refresh.
+  - **Phase 3 / customer app**: full `CustomerMenu`/`OrderTracking` rewrite with component split,
+    sticky scroll-spy tabs, search, one-tap add for simple dishes, item/cart bottom sheets,
+    cart persistence, stable idempotency key until cart changes or order succeeds, order stepper,
+    polling fallback, haptics/toasts, invalid-QR/skeleton states, root landing page; Playwright
+    e2e updated for the QR-first flow.
+  - **Phase 4 / speed & PWA**: `viewport-fit=cover`, safe-area shell, Latin-only fonts + critical
+    preload, manual vendor chunks, lazy `socket.io-client` import, and install/runtime caching
+    (menu stale-while-revalidate; table lookup network-first).
+  - **Phase 5 / admin QR**: A4 "Print active QR codes" sheet (6/page), QR error correction level M
+    for render/download/print, "Test scan" affordance, localhost/`http:`/insecure-origin warning,
+    rotate-QR warns about reprint and opens a replacement print preview, token styling cleanup.
+  - **Phase 6 / staff**: light token pass over Kitchen/Waiter status colors; no role/flow rewrite.
 
 ## Files created (high level)
 - apps/api: config, lib (logger, prisma, errors, money, asyncHandler, **orderState**,
@@ -94,46 +116,29 @@
   `Settings.upiId`. Applied to `cafe_db` and `cafe_test_db`; `prisma generate` rerun.
 
 ## Tests executed & results (this environment)
-- **Unit + integration (Vitest + Supertest): 53 passed / 0 failed**
-  (34 integration, 12 order-state unit, 7 money unit). Command: `npm test`. The three new
-  integration tests cover the PENDING -> waiter-confirm -> ordering handshake, customer item
-  cancellation removing the line from the bill preview, and immediate rejection of a deactivated
-  staff token.
-  The integration suite covers the item-level lifecycle, derived summary, per-item RBAC and
-  invalid-transition rejection, the ready-dish queue, `OrderItemEvent` audit, cancelled-item
-  billing, and the critical session-token cases (no token → 401; stale token after close → 409;
-  stale token cannot order into a new session at the same table; cross-session read → 404).
-  **Phase 9 additions:** admin tables list RBAC (waiter 403), QR URL/token shape + `TABLE_CREATED`
-  audit, trimmed labels, blank → 422, case-insensitive duplicate + rename conflict → 409
-  `DUPLICATE`, deactivate → public lookup 404 + `TABLE_DEACTIVATED` audit. The pre-Phase-9 suite
-  was repeated 17× consecutively with 0 failures; the Phase 9 suite has been run green twice (its
-  first run caught an over-long test label, which the API correctly rejected with 422).
-- **Live smoke vs running API (this change):** admin login, admin table list (10 seeded tables,
-  `qrUrl = http://localhost:5173/t/<token>`), create (trim + seats + 64-char token), public resolve
-  (no internal table ID), uppercase duplicate → 409, deactivate → public 404, audit rows
-  `TABLE_CREATED`/`TABLE_DEACTIVATED` — all as expected (see ledger run log in this change).
-- **Live smoke (PowerShell vs running API):** 17 passed / 0 failed
-  (server pricing, idempotency, price-tamper, transitions, invalid transition, billing,
-  overpayment rejection, **post-closure rejection**, saved-QR `canOrder=false`, RBAC 401/403).
-  *Note:* the smoke script was written for the pre-item-level contract; it has not been re-run
-  against the item-level API (kept as historical evidence, not re-claimed).
-- **Phase 11 verification (this environment):**
-  - `npm run typecheck` (`tsc -b`) — clean.
-  - `npm test` — **53 passed** (Vitest excludes the Playwright `e2e/` directory).
-  - `npm run lint` — **0 errors** (ESLint 9 flat config; a few advisory warnings remain).
-  - `npm run build` — API + shared `tsc` and web `vite build` clean; PWA precaches 18 assets.
-  - `npm run test:e2e` — **1 passed**: 360x800 Playwright happy path (QR -> Start ordering ->
-    waiter confirms -> add item -> place order -> tracking), including no-horizontal-scroll checks.
-  - `npx prisma migrate status` — up to date on both databases.
+- **QR-first redesign (Phases 1–6, this run):**
+  - `npm run typecheck` (`tsc -b`) — clean after each phase.
+  - `npm test` — **58 passed / 0 failed** (39 integration, 12 order-state unit, 7 money unit;
+    Vitest excludes `e2e/`). Phase 1 added 5 lazy-session/idle-sweep integration tests; all
+    pre-existing session-closure and token tests remain green.
+  - `npm run lint` — **0 errors** on the touched Phase 5/6 files; repo-wide lint still reports
+    pre-existing advisory warnings/errors in older customer/staff surfaces (not introduced here).
+  - `npm run build` — API + shared `tsc` and web `vite build` clean; PWA precaches 23 entries
+    (~481 KiB). Web entry ~13 KB raw / 4.4 KB gzip; socket loaded lazily; fonts Latin-only.
+  - `npm run test:e2e` — **1 passed** (360×800): QR browse (no auto-open), one-tap add, cart
+    persists across reload, place order (lazy session open), second-device join, tracking, bill
+    request, invalid QR error state.
+  - **Admin QR live check (Playwright)**: localhost warning shown for dev `qrUrl`s; "Print active
+    QR codes (18)" rendered 3 print sections × 6 cards = 18 cards, `window.print()` invoked once;
+    print-media PDF export produced **3 A4 pages** with expected per-section heights.
+- **Earlier Phase 11 (frictionless/PWA) baseline, still relevant:**
+  - `npm test` previously **53 passed** before Phase 1's 5 additions.
+  - `npm run test:e2e` previously covered the waiter-confirm flow; updated in Phase 3 to the
+    QR-first lazy-open flow (still green).
+  - `npx prisma migrate status` — up to date (no redesign migration required).
 - **CI:** `.github/workflows/ci.yml` runs Postgres 16, migrate, seed, typecheck, lint, unit +
   integration tests, build, and the Playwright happy path (artifacts uploaded on failure).
-- **Builds:** `tsc -b` (project references across shared/api/web) and `vite build` are **clean**.
-  (A prior ledger line claiming clean builds/tests was corrected here: the earlier 25-test count
-  predated this change.)
-- **Phase 10 (mobile pass):** `npm run typecheck` and `npm run build -w @cafe/web` re-run green
-  after the changes; the production CSS bundle was checked to contain `.chip`/`.pb-safe` and no
-  remaining `top-[64px]`/`top-[72px]` offsets. No API change, so the 50-test suite was not
-  re-run for this phase (nothing it covers was touched).
+- **Builds:** `tsc -b` and `vite build` are **clean**.
 
 ## Environment notes
 - Node 24, npm 12, PostgreSQL 18 (local). **Docker is NOT installed** on this machine, so
@@ -151,42 +156,43 @@
 - Socket horizontal scaling needs the Redis adapter (documented, not wired).
 - Playwright E2E exists for the customer happy path only (360 px QR -> order -> tracking); the
   kitchen, waiter and admin UIs are still covered by integration tests and manual passes.
-- Phase 9: scanning the rendered/downloaded/printed QR with a real phone camera is a manual check
-  (no browser automation here); QR images are generated client-side, so the UI itself needs a
-  browser pass — checklist in `docs/ACCEPTANCE-TESTS.md` under "Admin → Tables & QR Codes".
+- Phase 9/5: scanning a downloaded/printed QR with a real phone camera is a manual check.
+  Admin print-all layout was verified via Playwright `window.print` capture + print-media PDF (3
+  A4 pages, 6 cards/page), but physical camera scans, printer margins, and paper scaling remain
+  manual.
 - Phase 9: case-insensitive duplicate table numbers are enforced in app code (the Postgres unique
   constraint on `number` stays case-sensitive); two simultaneous creates differing only by case
   could theoretically race past the check.
-- Phase 9: no bulk multi-table print sheet (explicitly out of scope in the plan); print is
-  one table at a time.
-- Phase 10: the mobile pass is **code-level only** — no browser/emulator automation exists in this
-  environment, so actual rendering at ~360 px, iOS Safari behavior (focus zoom, safe-area), and
-  touch feel on a real device were **not visually verified**.
+- Phase 6: staff screens received a light token pass, not a full UX rewrite.
+- Repo-wide `npm run lint` reports pre-existing warnings/errors outside the Phase 5/6 touch set;
+  touched files lint clean.
+- Mobile rendering at ~360 px, iOS Safari safe-area/focus behavior, sound unlock, and Wake Lock
+  still need real-device verification.
 
 ## Definition of Done status
-Satisfied and **verified** in this environment:
-builds ✓, migrations from clean DB ✓ (both migrations), seed ✓, auth/RBAC ✓, QR resolves table ✓,
-customer orders during active session ✓, **server rejects orders after close** ✓,
+Satisfied and **verified** in this environment (QR-first redesign Phases 1–6):
+builds ✓, migrations current/no redesign migration needed ✓, seed ✓, auth/RBAC ✓, QR resolves table ✓,
+**lazy QR session open/join is idempotent and server-enforced** ✓,
+**closed-session orders still return 409 SESSION_CLOSED** ✓,
 **stale session token cannot order or read into another/next session** ✓,
 **per-item preparation tracked independently** ✓, **derived order summary recomputed** ✓,
 **per-item RBAC + invalid-transition rejection** ✓, **immutable per-item event audit** ✓,
 duplicate submissions safe (idempotency) ✓, kitchen per-dish ready + waiter per-dish served ✓,
 ready-dish pickup queue ✓, bills/payments consistent (cancelled items excluded) ✓,
 unpaid-balance + unresolved-orders block close ✓, cross-table/IDOR rejected ✓,
-critical automated tests pass ✓, error handling + logging ✓, setup/deploy/backup docs ✓,
-**admin Tables & QR page (list/create/edit/deactivate/rotate, QR preview, PNG+SVG+print, copy
-link) built and typechecked** ✓, **unique QR URL per table from configured base URL** ✓,
-**case-insensitive duplicate labels rejected (409)** ✓, **inactive/unknown QR tokens → 404** ✓,
-**order submission revalidates session on the server (pre-existing, still green)** ✓,
-public payload carries no internal IDs ✓.
+critical automated tests pass (**58**) ✓, QR-first e2e pass (**1**) ✓,
+error handling + logging ✓, setup/deploy/backup docs ✓,
+**admin Tables & QR: list/create/edit/deactivate/rotate, QR preview, PNG+SVG, single print, A4
+print-all (6/page) with QR error correction M, test-scan affordance, localhost/insecure link
+warning, rotate→reprint flow** ✓, **unique QR URL per table from configured base URL** ✓,
+**case-insensitive duplicate labels rejected (409)** ✓, **inactive/unknown QR tokens → 404** ✓.
 Docker deployment remains **unverified** (no Docker on this host), not claimed complete.
-The PowerShell smoke suite has not been re-run against the item-level API (see Tests above).
-**Still manual:** scan a downloaded/printed QR with a real phone camera and walk the admin UI in a
-browser (`docs/ACCEPTANCE-TESTS.md` → "Admin → Tables & QR Codes"), plus the kitchen/waiting
-surfaces on a real iOS device (sound unlock, Wake Lock and safe-area behavior).
+**Still manual:** scan a downloaded/printed QR with a real phone camera; walk admin/staff UIs in a
+browser on a real iOS/Android device (safe-area, focus zoom, sound unlock, Wake Lock, haptics);
+run Lighthouse on a production-like build/host.
 
 ## Next exact step
-Add Playwright coverage for the staff surfaces (kitchen mark-ready, waiter confirm/payment, admin
-86/settings), then run `docker compose up --build` on a Docker-enabled host. On a real iOS device,
-verify the sound-unlock, Wake Lock and safe-area behavior, and scan a printed QR with the camera.
-Re-point `docs/smoke.ps1` at the item-level endpoints when convenient.
+Run Lighthouse (mobile) against a production-like host, do a real-device QR camera + safe-area pass,
+then add Playwright coverage for staff surfaces (kitchen mark-ready, waiter confirm/payment, admin
+86/settings) and verify `docker compose up --build` on a Docker-enabled host. Re-point
+`docs/smoke.ps1` at the item-level endpoints when convenient.
