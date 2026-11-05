@@ -46,11 +46,11 @@ const STATUS_COLOR: Record<string, string> = {
   OCCUPIED: "bg-blue-100 text-blue-800",
   BILL_REQUESTED: "bg-amber-100 text-amber-800",
   PAYMENT_PENDING: "bg-orange-100 text-orange-800",
-  CLOSED: "bg-slate-100 text-slate-600",
+  CLOSED: "bg-cream text-muted",
 };
 
 const ITEM_STYLE: Record<OrderItemStatus, string> = {
-  QUEUED: "bg-slate-100 text-slate-600",
+  QUEUED: "bg-cream text-espresso",
   PREPARING: "bg-amber-100 text-amber-800",
   READY: "bg-green-100 text-green-800",
   SERVED: "bg-emerald-50 text-emerald-700",
@@ -219,10 +219,10 @@ export function WaiterPage() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-20 bg-slate-900 text-white px-4 py-3 flex items-center justify-between">
+    <div className="min-h-screen bg-cream">
+      <header className="sticky top-0 z-20 bg-espresso text-white px-4 py-3 flex items-center justify-between">
         <div>
-          <div className="text-lg font-bold">Waiter Dashboard</div>
+          <div className="display text-lg font-bold">Waiter Dashboard</div>
           <div className="text-xs opacity-70">{user?.name}</div>
         </div>
         <div className="flex gap-2">
@@ -232,12 +232,12 @@ export function WaiterPage() {
       </header>
 
       {(billRequested.length > 0 || active.length > 0) && (
-        <div className="bg-amber-50 border-b border-amber-200 p-3 space-y-1">
+        <div className="bg-amber-soft border-b border-line p-3 space-y-1">
           {billRequested.map((t) => (
-            <div key={t.id} className="text-amber-800 text-sm font-semibold">🧾 Bill requested — Table {t.number}</div>
+            <div key={t.id} className="text-amber-ink text-sm font-semibold">🧾 Bill requested — Table {t.number}</div>
           ))}
           {active.map((r) => (
-            <div key={r.id} className="flex items-center justify-between gap-2 text-amber-800 text-sm">
+            <div key={r.id} className="flex items-center justify-between gap-2 text-amber-ink text-sm">
               <span>
                 🙋 Assistance — Table {r.table.number}
                 {r.message ? ` · ${r.message}` : ""}
@@ -256,27 +256,27 @@ export function WaiterPage() {
 
       {/* Ready dish pickup queue (spec 8.2). */}
       <section className="p-3">
-        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 mb-2">
-          Ready to serve {readyItems.length > 0 && <span className="badge bg-green-100 text-green-800 ml-1">{readyItems.length}</span>}
+        <h2 className="text-sm font-bold uppercase tracking-wide text-muted mb-2">
+          Ready to serve {readyItems.length > 0 && <span className="badge bg-forest-soft text-forest ml-1">{readyItems.length}</span>}
         </h2>
-        {readyItems.length === 0 && <div className="text-sm text-slate-400">Nothing waiting for pickup.</div>}
+        {readyItems.length === 0 && <div className="text-sm text-muted">Nothing waiting for pickup.</div>}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {Object.entries(readyGroups).map(([orderId, group]) => (
-            <div key={orderId} className="card border-l-4 border-l-green-500 p-3">
+            <div key={orderId} className="card border-l-4 border-l-forest p-3">
               <div className="flex justify-between items-start">
                 <div>
-                  <div className="font-bold">Table {group.tableNumber}</div>
-                  <div className="text-xs text-slate-500">{group.orderNumber}</div>
+                  <div className="display font-bold">Table {group.tableNumber}</div>
+                  <div className="text-xs text-muted">{group.orderNumber}</div>
                 </div>
-                <span className="badge bg-green-100 text-green-800">{group.items.length} dish{group.items.length > 1 ? "es" : ""}</span>
+                <span className="badge bg-forest-soft text-forest">{group.items.length} dish{group.items.length > 1 ? "es" : ""}</span>
               </div>
               <ul className="mt-2 space-y-2">
                 {group.items.map((it) => (
-                  <li key={it.id} className="flex justify-between items-center gap-2 border-t pt-2 first:border-t-0 first:pt-0">
+                  <li key={it.id} className="flex justify-between items-center gap-2 border-t border-line pt-2 first:border-t-0 first:pt-0">
                     <div className="min-w-0">
                       <div className="text-sm font-semibold">{it.quantity}× {it.nameSnapshot}</div>
-                      {it.addons.length > 0 && <div className="text-xs text-slate-500">+ {it.addons.map((a) => a.nameSnapshot).join(", ")}</div>}
-                      <div className="text-xs text-slate-400">ready {minutesSince(it.readyAt)}m ago</div>
+                      {it.addons.length > 0 && <div className="text-xs text-muted">+ {it.addons.map((a) => a.nameSnapshot).join(", ")}</div>}
+                      <div className="text-xs text-muted">ready {minutesSince(it.readyAt)}m ago</div>
                     </div>
                     <button
                       className="btn btn-primary text-xs !py-2"
@@ -294,7 +294,7 @@ export function WaiterPage() {
       </section>
 
       <section className="p-3">
-        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 mb-2">Tables</h2>
+        <h2 className="text-sm font-bold uppercase tracking-wide text-muted mb-2">Tables</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {tables.map((t) => {
             const session = t.sessions[0];
@@ -310,21 +310,21 @@ export function WaiterPage() {
                 onClick={() => setSelected(t)}
               >
                 <div className="flex justify-between items-start">
-                  <div className="text-lg font-bold">T{t.number}</div>
+                  <div className="display text-lg font-bold">T{t.number}</div>
                   <span
                     className={`badge ${
-                      session?.status === "PENDING" ? "bg-amber-100 text-amber-800" : STATUS_COLOR[t.status] ?? "bg-slate-100"
+                      session?.status === "PENDING" ? "bg-amber-soft text-amber-ink" : STATUS_COLOR[t.status] ?? "bg-cream text-muted"
                     }`}
                   >
                     {session?.status === "PENDING" ? "REQUESTED" : t.status.replace("_", " ")}
                   </span>
                 </div>
                 {session && (
-                  <div className="mt-1 text-xs text-slate-600">
+                  <div className="mt-1 text-xs text-muted">
                     {openItems > 0 ? `${openItems} dish${openItems > 1 ? "es" : ""} active` : "No open dishes"}
                   </div>
                 )}
-                {!session && t.status === "AVAILABLE" && <div className="mt-1 text-xs text-green-600">Available</div>}
+                {!session && t.status === "AVAILABLE" && <div className="mt-1 text-xs text-forest">Available</div>}
               </button>
             );
           })}
@@ -333,15 +333,15 @@ export function WaiterPage() {
 
       {selected && (
         <div className="fixed inset-0 z-40 bg-black/50 flex items-end sm:items-center justify-center">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-4 pb-safe max-h-[90dvh] overflow-y-auto">
+          <div className="bg-surface rounded-t-[var(--radius-sheet)] sm:rounded-[var(--radius-sheet)] w-full sm:max-w-md p-4 pb-safe max-h-[90dvh] overflow-y-auto">
             <div className="flex justify-between items-center mb-3">
-              <h3 className="text-lg font-bold">Table {selected.number}</h3>
+              <h3 className="display text-lg font-bold">Table {selected.number}</h3>
               <button className="btn btn-ghost !px-3" aria-label="Close" onClick={() => { setSelected(null); setActionError(""); }}>✕</button>
             </div>
-            <div className="text-sm text-slate-600 mb-3">Status: {selected.status}</div>
+            <div className="text-sm text-muted mb-3">Status: {selected.status}</div>
 
             {actionError && (
-              <div className="mb-3 flex items-start justify-between gap-3 rounded-lg bg-red-50 text-red-700 px-3 py-2 text-sm">
+              <div className="mb-3 flex items-start justify-between gap-3 rounded-lg bg-danger-soft text-danger px-3 py-2 text-sm">
                 <span>{actionError}</span>
                 <button className="shrink-0 self-start rounded-md p-2 font-bold" aria-label="Dismiss message" onClick={() => setActionError("")}>
                   ✕
@@ -371,7 +371,7 @@ export function WaiterPage() {
 
                 {selected.sessions[0].orders.map((o) => (
                   <div key={o.id} className="card p-3">
-                    <div className="flex justify-between text-xs text-slate-500">
+                    <div className="flex justify-between text-xs text-muted">
                       <span>{o.status}</span>
                     </div>
                     <ul className="mt-1 space-y-1.5">
@@ -424,12 +424,12 @@ export function WaiterPage() {
                       <div key={b.id} className="card p-3 space-y-2">
                         <div className="flex justify-between items-center">
                           <span className="font-semibold">Bill</span>
-                          <span className={`badge ${b.status === "PARTIAL" ? "bg-amber-100 text-amber-800" : "bg-slate-100"}`}>
+                          <span className={`badge ${b.status === "PARTIAL" ? "bg-amber-soft text-amber-ink" : "bg-cream text-espresso"}`}>
                             {b.status}
                           </span>
                         </div>
                         {b.lineItems && b.lineItems.length > 0 && (
-                          <div className="divide-y text-sm">
+                          <div className="divide-y divide-line text-sm">
                             {b.lineItems.map((l) => (
                               <div key={l.id} className="flex justify-between py-1">
                                 <span>
@@ -440,7 +440,7 @@ export function WaiterPage() {
                             ))}
                           </div>
                         )}
-                        <div className="border-t pt-2 text-sm space-y-0.5">
+                        <div className="border-t border-line pt-2 text-sm space-y-0.5">
                           <div className="flex justify-between">
                             <span>Subtotal</span>
                             <span>{formatMoney(b.subtotalMinor)}</span>
@@ -459,7 +459,7 @@ export function WaiterPage() {
                               <span>{formatMoney(b.roundingMinor)}</span>
                             </div>
                           )}
-                          <div className="flex justify-between font-semibold border-t pt-1">
+                          <div className="flex justify-between font-semibold border-t border-line pt-1">
                             <span>Total</span>
                             <span>{formatMoney(b.totalMinor)}</span>
                           </div>
@@ -524,7 +524,7 @@ export function WaiterPage() {
                             Record
                           </button>
                         </div>
-                        <div className="text-xs text-amber-700">
+                        <div className="text-xs text-amber-ink">
                           The session can only close once this bill is PAID.
                         </div>
                       </div>

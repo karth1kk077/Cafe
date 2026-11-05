@@ -32,7 +32,7 @@ const FILTERS: Array<{ key: FilterKey; label: string; match: OrderItemStatus[] }
 ];
 
 const ITEM_STYLE: Record<OrderItemStatus, string> = {
-  QUEUED: "bg-slate-100 text-slate-700",
+  QUEUED: "bg-cream text-espresso",
   PREPARING: "bg-amber-100 text-amber-800",
   READY: "bg-green-100 text-green-800",
   SERVED: "bg-emerald-50 text-emerald-700",
@@ -163,14 +163,14 @@ export function KitchenPage() {
     .filter((o) => o.items.length > 0);
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-cream">
       {/* Header + filter bar stick together so they never overlap, whatever
           the header's height ends up being. */}
       <div className="sticky top-0 z-20">
-        <header className="bg-slate-900 text-white px-4 py-3">
+        <header className="bg-espresso text-white px-4 py-3">
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-lg font-bold">Kitchen</div>
+              <div className="display text-lg font-bold">Kitchen</div>
               <div className="text-xs opacity-70">{user?.name}</div>
             </div>
             <div className="flex gap-2">
@@ -180,7 +180,7 @@ export function KitchenPage() {
                 </button>
               ) : (
                 <button
-                  className={`chip ${soundOn ? "!bg-green-600 text-white" : "bg-slate-700 text-slate-300"}`}
+                  className={`chip ${soundOn ? "!bg-forest text-white" : "bg-white/10 text-white/70"}`}
                   onClick={() => setSoundOn((s) => !s)}
                 >
                   🔔 {soundOn ? "On" : "Off"}
@@ -193,11 +193,11 @@ export function KitchenPage() {
           </div>
         </header>
 
-        <nav className="flex gap-2 overflow-x-auto bg-white border-b px-3 py-2">
+        <nav className="flex gap-2 overflow-x-auto bg-surface border-b border-line px-3 py-2">
           {FILTERS.map((f) => (
             <button
               key={f.key}
-              className={`chip whitespace-nowrap ${filter === f.key ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+              className={`chip whitespace-nowrap ${filter === f.key ? "!bg-espresso text-white" : "bg-cream text-espresso"}`}
               onClick={() => setFilter(f.key)}
             >
               {f.label}
@@ -208,19 +208,19 @@ export function KitchenPage() {
       </div>
 
       <main className="p-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {!orders.length && <div className="p-8 text-center text-slate-500 col-span-full">No dishes in this view.</div>}
+        {!orders.length && <div className="p-8 text-center text-muted col-span-full">No dishes in this view.</div>}
         {orders.map((o) => {
           const mins = minutesSince(o.createdAt);
           return (
-            <div key={o.id} className="card border-l-4 border-l-slate-400 p-3">
+            <div key={o.id} className="card border-l-4 border-l-line-strong p-3">
               <div className="flex justify-between items-start">
                 <div>
-                  <div className="text-xl font-bold">Table {o.table.number}</div>
-                  <div className="text-xs text-slate-500">{o.orderNumber}</div>
+                  <div className="display text-xl font-bold">Table {o.table.number}</div>
+                  <div className="text-xs text-muted">{o.orderNumber}</div>
                 </div>
                 <div className="text-right">
-                  <span className={`badge ${mins > 10 ? "!bg-red-100 text-red-700" : "bg-slate-100"}`}>{mins}m</span>
-                  <div className="text-xs text-slate-500 mt-1">{o.status}</div>
+                  <span className={`badge ${mins > 10 ? "!bg-danger-soft text-danger" : "bg-cream text-espresso"}`}>{mins}m</span>
+                  <div className="text-xs text-muted mt-1">{o.status}</div>
                 </div>
               </div>
               {o.items.some((it) => it.status === "PREPARING") && (
@@ -234,15 +234,15 @@ export function KitchenPage() {
               )}
               <ul className="mt-2 space-y-2">
                 {o.items.map((it) => (
-                  <li key={it.id} className="border-t pt-2 first:border-t-0 first:pt-0">
+                  <li key={it.id} className="border-t border-line pt-2 first:border-t-0 first:pt-0">
                     <div className="flex justify-between items-start gap-2">
                       <div className="min-w-0">
                         <span className="font-semibold">{it.quantity}× {it.nameSnapshot}</span>
                         {it.addons.length > 0 && (
-                          <span className="text-slate-500"> + {it.addons.map((a) => a.nameSnapshot).join(", ")}</span>
+                          <span className="text-muted"> + {it.addons.map((a) => a.nameSnapshot).join(", ")}</span>
                         )}
                         {it.specialInstructions && (
-                          <div className="text-amber-700 text-xs mt-0.5">✎ {it.specialInstructions}</div>
+                          <div className="text-amber-ink text-xs mt-0.5">✎ {it.specialInstructions}</div>
                         )}
                       </div>
                       <span className={`badge whitespace-nowrap ${ITEM_STYLE[it.status]}`}>{it.status}</span>
@@ -259,19 +259,19 @@ export function KitchenPage() {
                       )}
                       {it.status === "PREPARING" && (
                         <button
-                          className="btn btn-primary text-xs !py-2 !bg-green-600"
+                          className="btn btn-primary text-xs !py-2 !bg-forest"
                           disabled={setItemStatus.isPending}
                           onClick={() => setItemStatus.mutate({ itemId: it.id, status: "READY" })}
                         >
                           Mark ready
                         </button>
                       )}
-                      {it.status === "READY" && <span className="text-xs text-green-700 font-semibold">✓ Waiting for pickup</span>}
+                      {it.status === "READY" && <span className="text-xs text-forest font-semibold">✓ Waiting for pickup</span>}
                     </div>
                   </li>
                 ))}
               </ul>
-              <div className="text-xs text-slate-400 mt-2">Order total {formatMoney(o.totalMinor)}</div>
+              <div className="text-xs text-muted mt-2">Order total <span className="num">{formatMoney(o.totalMinor)}</span></div>
             </div>
           );
         })}

@@ -148,23 +148,23 @@ export function AdminPage() {
   });
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-cream">
       {/* Header + tab bar stick together so the tab bar can't slide under the
           header on narrow screens. */}
       <div className="sticky top-0 z-20 print:hidden">
-        <header className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between">
+        <header className="bg-espresso text-white px-4 py-3 flex items-center justify-between">
           <div>
-            <div className="text-lg font-bold">Admin</div>
+            <div className="display text-lg font-bold">Admin</div>
             <div className="text-xs opacity-70">{user?.name}</div>
           </div>
           <button className="btn btn-ghost !text-white !border-white/30 text-sm" onClick={() => { logout(); location.href = "/login"; }}>Exit</button>
         </header>
 
-        <nav className="flex gap-2 overflow-x-auto bg-white border-b px-3 py-2">
+        <nav className="flex gap-2 overflow-x-auto bg-surface border-b border-line px-3 py-2">
           {TABS.map((t) => (
             <button
               key={t}
-              className={`chip whitespace-nowrap ${tab === t ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+              className={`chip whitespace-nowrap ${tab === t ? "!bg-espresso text-white" : "bg-cream text-espresso"}`}
               onClick={() => setTab(t)}
             >
               {t}
@@ -192,12 +192,12 @@ export function AdminPage() {
               </div>
               <button className="btn btn-primary" onClick={() => createUser.mutate()} disabled={createUser.isPending}>Create staff</button>
             </div>
-            <div className="card divide-y">
+            <div className="card divide-y divide-line">
               {users?.users.map((u) => (
                 <div key={u.id} className="p-3 flex justify-between items-center">
                   <div>
                     <div className="font-semibold">{u.name}</div>
-                    <div className="text-sm text-slate-500">
+                    <div className="text-sm text-muted">
                       {u.email} · {u.role}
                     </div>
                   </div>
@@ -248,18 +248,18 @@ export function AdminPage() {
                 <div className="flex justify-between items-center">
                   <div>
                     <div className="font-semibold">{c.name}</div>
-                    {!c.isActive && <div className="text-xs text-slate-500">Inactive</div>}
+                    {!c.isActive && <div className="text-xs text-muted">Inactive</div>}
                   </div>
                   <button className="btn btn-ghost text-xs" onClick={() => toggleCategory.mutate({ id: c.id, isActive: !c.isActive })}>
                     {c.isActive ? "Hide category" : "Show category"}
                   </button>
                 </div>
-                <div className="divide-y">
+                <div className="divide-y divide-line">
                   {c.items.map((item) => (
                     <div key={item.id} className="py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                       <div>
                         <div className="font-medium">{item.name}</div>
-                        <div className="text-xs text-slate-500">{formatMoney(item.priceMinor)}</div>
+                        <div className="text-xs text-muted num">{formatMoney(item.priceMinor)}</div>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <button
@@ -290,14 +290,14 @@ export function AdminPage() {
         )}
 
         {tab === "Audit" && (
-          <div className="card divide-y">
+          <div className="card divide-y divide-line">
             {audit?.logs.map((l) => (
               <div key={l.id} className="p-3 flex justify-between items-center text-sm">
                 <div>
                   <div className="font-semibold">{l.action}</div>
-                  <div className="text-slate-500">{l.entityType}</div>
+                  <div className="text-muted">{l.entityType}</div>
                 </div>
-                <div className="text-xs text-slate-400">{new Date(l.createdAt).toLocaleString()}</div>
+                <div className="text-xs text-muted">{new Date(l.createdAt).toLocaleString()}</div>
               </div>
             ))}
           </div>
@@ -306,7 +306,7 @@ export function AdminPage() {
         {tab === "Settings" && (
           <div className="card p-3 space-y-2">
             <div className="font-semibold">Café settings</div>
-            <div className="text-sm text-slate-600">
+            <div className="text-sm text-muted">
               Currency: {settings?.settings.currency} · Tax: {(settings?.settings.taxRateBps ?? 0) / 100}% · Service: {(settings?.settings.serviceChargeBps ?? 0) / 100}%
             </div>
             <div className="grid gap-2 sm:grid-cols-2">

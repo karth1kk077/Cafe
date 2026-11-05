@@ -30,10 +30,10 @@ export function LoginPage() {
     <div className="min-h-screen flex items-center justify-center p-4">
       <form onSubmit={onSubmit} className="card w-full max-w-sm p-6 space-y-4">
         <div>
-          <h1 className="text-2xl font-bold">Smart Café</h1>
-          <p className="text-sm text-slate-500">Staff sign in</p>
+          <h1 className="display text-3xl">Smart Café</h1>
+          <p className="text-sm text-muted">Staff sign in</p>
         </div>
-        {error && <div className="rounded bg-red-50 text-red-700 text-sm px-3 py-2">{error}</div>}
+        {error && <div className="rounded-xl bg-danger-soft text-danger text-sm px-3 py-2">{error}</div>}
         <div>
           <label className="text-sm font-semibold">Email</label>
           <input className="input mt-1" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />

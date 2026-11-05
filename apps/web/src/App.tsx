@@ -14,9 +14,9 @@ const AdminPage = lazy(() => import("./pages/AdminPage").then((m) => ({ default:
 function RouteFallback() {
   return (
     <div className="p-8 space-y-3" aria-busy="true" aria-live="polite">
-      <div className="h-6 w-40 rounded bg-slate-200 animate-pulse" />
-      <div className="h-24 rounded-xl bg-slate-100 animate-pulse" />
-      <div className="h-24 rounded-xl bg-slate-100 animate-pulse" />
+      <div className="h-6 w-40 rounded bg-line animate-pulse" />
+      <div className="h-24 rounded-card bg-surface border border-line animate-pulse" />
+      <div className="h-24 rounded-card bg-surface border border-line animate-pulse" />
     </div>
   );
 }
@@ -35,7 +35,7 @@ function OfflineBanner() {
   }, []);
   if (online) return null;
   return (
-    <div className="fixed top-0 inset-x-0 z-50 bg-amber-500 text-slate-900 text-center text-sm py-2 px-4" role="status">
+    <div className="fixed top-0 inset-x-0 z-50 bg-amber-soft text-amber-ink text-center text-sm py-2 px-4 border-b border-line" role="status">
       You are offline — we will refresh automatically when the connection returns.
     </div>
   );

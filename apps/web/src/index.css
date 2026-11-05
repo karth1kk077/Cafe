@@ -1,80 +1,186 @@
 @import "tailwindcss";
+/* Self-hosted, `font-display: swap` (Fontsource ships swap by default). No CDN. */
+@import "@fontsource/fraunces/600.css";
+@import "@fontsource/fraunces/700.css";
+@import "@fontsource/dm-sans/400.css";
+@import "@fontsource/dm-sans/500.css";
+@import "@fontsource/dm-sans/700.css";
+
+/*
+ * Café design tokens (Tailwind v4 `@theme`). Every screen — customer and staff —
+ * inherits these, so brand changes happen in one place.
+ */
+@theme {
+  --color-cream: #faf6f0;
+  --color-surface: #ffffff;
+  --color-espresso: #2b1d14;
+  --color-muted: #7a6a5d;
+  --color-terracotta: #c2410c;
+  --color-terracotta-dark: #9a3412;
+  --color-forest: #2f6b4f;
+  --color-forest-soft: #e7f1ea;
+  --color-line: #eadfd3;
+  --color-line-strong: #dccbb9;
+  --color-danger: #b42318;
+  --color-danger-soft: #fef3f2;
+  --color-amber-soft: #fdf1dd;
+  --color-amber-ink: #92400e;
+
+  --font-display: "Fraunces", ui-serif, Georgia, "Times New Roman", serif;
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --radius-card: 1.125rem;
+  --radius-sheet: 1.25rem;
+  --radius-control: 0.875rem;
+
+  --shadow-soft: 0 1px 2px rgb(43 29 20 / 0.04), 0 10px 30px -18px rgb(43 29 20 / 0.28);
+  --shadow-lift: 0 2px 4px rgb(43 29 20 / 0.06), 0 18px 40px -20px rgb(43 29 20 / 0.35);
+
+  --ease-cafe: cubic-bezier(0.22, 1, 0.36, 1);
+}
 
 :root {
   color-scheme: light;
+  --cafe-header-h: 3.75rem;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
   margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  background: #f8fafc;
-  color: #0f172a;
+  font-family: var(--font-sans);
+  background: var(--color-cream);
+  color: var(--color-espresso);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+
+/* Prices and quantities never jitter as digits change. */
+.num,
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+h1,
+h2,
+h3,
+.display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* ---- Shared component classes (restyled from tokens) ---- */
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  border-radius: 0.75rem;
-  padding: 0.6rem 1.1rem;
+  border-radius: var(--radius-control);
+  padding: 0.65rem 1.1rem;
   font-weight: 600;
-  transition: background 0.15s, opacity 0.15s;
+  font-family: var(--font-sans);
+  transition:
+    background-color 180ms var(--ease-cafe),
+    border-color 180ms var(--ease-cafe),
+    color 180ms var(--ease-cafe),
+    transform 120ms var(--ease-cafe),
+    opacity 180ms var(--ease-cafe);
   cursor: pointer;
+  min-height: 2.75rem;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
-.btn-primary {
-  background: #0f172a;
-  color: white;
+.btn:active:not(:disabled) {
+  transform: scale(0.975);
 }
-.btn-primary:disabled {
+.btn:focus-visible,
+.chip:focus-visible,
+.input:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--color-terracotta);
+  outline-offset: 2px;
+}
+.btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-/* Compact variant for dense list rows; must follow .btn to win the cascade. */
-.btn-sm {
-  padding: 0.35rem 0.75rem;
-  font-size: 0.85rem;
-  border-radius: 0.6rem;
-  /* Keep compact buttons comfortable to tap on phones. */
-  min-height: 2.25rem;
+.btn-primary {
+  background: var(--color-espresso);
+  color: #fff;
+}
+.btn-primary:active:not(:disabled) {
+  background: #1f140e;
 }
 .btn-accent {
-  background: #c2410c;
-  color: white;
+  background: var(--color-terracotta);
+  color: #fff;
+}
+.btn-accent:active:not(:disabled) {
+  background: var(--color-terracotta-dark);
 }
 .btn-ghost {
-  background: transparent;
-  border: 1px solid #e2e8f0;
-  color: #0f172a;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  color: var(--color-espresso);
 }
+.btn-ghost:active:not(:disabled) {
+  background: var(--color-cream);
+}
+/* Compact variant for dense list rows; must follow .btn to win the cascade. */
+.btn-sm {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+  border-radius: 0.7rem;
+  min-height: 2.5rem;
+}
+
 .input {
   width: 100%;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.75rem;
-  padding: 0.6rem 0.9rem;
-  /* 16px keeps iOS Safari from auto-zooming the page when a field is focused. */
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  padding: 0.65rem 0.9rem;
+  /* 16px keeps iOS Safari from auto-zooming when a field is focused. */
   font-size: 1rem;
-  background: white;
+  background: var(--color-surface);
+  color: var(--color-espresso);
+  min-height: 2.75rem;
+  transition: border-color 180ms var(--ease-cafe), box-shadow 180ms var(--ease-cafe);
+}
+.input::placeholder {
+  color: color-mix(in srgb, var(--color-muted) 75%, white);
 }
 .input:focus {
-  outline: 2px solid #0f172a;
-  outline-offset: 1px;
+  outline: none;
+  border-color: var(--color-terracotta);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-terracotta) 18%, transparent);
 }
+
 .card {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 1rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-soft);
 }
+
 .badge {
   display: inline-flex;
   align-items: center;
   border-radius: 9999px;
-  padding: 0.15rem 0.6rem;
-  font-size: 0.72rem;
+  padding: 0.18rem 0.6rem;
+  font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
 }
+
 /* Interactive filter/selector chip: same look as .badge but with a touchable
    hit area. Use on <button> chips; keep .badge for static status labels. */
 .chip {
@@ -82,26 +188,74 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 9999px;
-  padding: 0.5rem 0.9rem;
-  min-height: 2.25rem;
+  padding: 0.55rem 0.95rem;
+  min-height: 2.75rem;
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
   cursor: pointer;
+  border: 1px solid transparent;
+  transition:
+    background-color 180ms var(--ease-cafe),
+    color 180ms var(--ease-cafe),
+    border-color 180ms var(--ease-cafe),
+    transform 120ms var(--ease-cafe);
+  -webkit-tap-highlight-color: transparent;
 }
+.chip:active {
+  transform: scale(0.97);
+}
+
 /* Bottom padding that clears the home-indicator area on notched phones
    (env() is 0 on desktop, so this is a no-op there). */
 .pb-safe {
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 }
 
+/* Subtle entrance for sheets/toasts; disabled when the user prefers less motion. */
+@keyframes cafe-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-rise {
+  animation: cafe-rise 220ms var(--ease-cafe) both;
+}
+@keyframes cafe-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade {
+  animation: cafe-fade 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .btn:active:not(:disabled),
+  .chip:active {
+    transform: none;
+  }
+}
+
 /* Phone-targeted overrides. Kept in `base` (unlayered), so they beat Tailwind's
    `utilities` layer regardless of class order — no `!important` needed. */
-
-/* Vue/React sheets and dense rows shrink buttons with `!py-*`; once a button has
-   a min-height, vertical padding is what actually centres the label (the box no
-   longer hugs the content). Redefine the small steps so the text stays inside. */
 @media (max-width: 640px) {
   .btn {
     min-height: 2.75rem;
