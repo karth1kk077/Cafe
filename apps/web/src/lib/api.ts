@@ -66,6 +66,9 @@ export interface PublicMenuResponse {
   settings: { cafeName: string; currency: string };
 }
 
+export type PublicMenuCategory = PublicMenuResponse["categories"][number];
+export type PublicMenuItem = PublicMenuCategory["items"][number];
+
 export interface TableResponse {
   /** Internal IDs are never exposed on public endpoints. */
   table: { number: string; status: string };

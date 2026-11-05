@@ -66,50 +66,75 @@ test.afterAll(async () => {
   }
 });
 
-test("customer goes from QR to confirmed table to placed order at 360px", async ({ page, request }) => {
+test("customer scans QR, orders in one tap, and tracks the order at 360px", async ({ page, request, browser }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 360, height: 800 });
   await page.goto(`/t/${tableToken}`);
 
   await expect(page.getByText(`Table ${tableNumber}`)).toBeVisible();
+  // A bare scan must not occupy the table: ordering opens on the first order.
+  await expect(page.getByText(/Browse freely/i)).toBeVisible();
 
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );
   expect(overflow).toBeLessThanOrEqual(1);
 
-  await page.getByRole("button", { name: "Start ordering" }).click();
-  await expect(page.getByText(/Waiting for a waiter to confirm/i)).toBeVisible();
-
-  // Staff side of the handshake, exactly as the waiter screen performs it.
-  const login = await request.post("/api/auth/login", {
-    data: { email: "waiter@cafe.local", password: "Password123!" },
-  });
-  expect(login.ok()).toBeTruthy();
-  const { token } = await login.json();
-
-  const session = await prisma.diningSession.findFirstOrThrow({
-    where: { tableId, status: "PENDING" },
-  });
-  const confirm = await request.post(`/api/staff/sessions/${session.id}/confirm`, {
-    headers: { Authorization: `Bearer ${token}` },
-    data: {},
-  });
-  expect(confirm.ok()).toBeTruthy();
-
-  // The waiting screen polls; once confirmed, ordering controls appear.
-  await expect(page.getByText(/Waiting for a waiter to confirm/i)).toBeHidden({ timeout: 15_000 });
-
-  await page.getByPlaceholder(/Search menu/i).fill(itemName);
+  // One-tap add for a dish with no variants or add-ons.
+  await page.getByPlaceholder(/Search the menu/i).fill(itemName);
   await expect(page.getByRole("heading", { name: itemName })).toBeVisible();
-  await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.getByRole("button", { name: /Place Order/i }).click();
+  await page.getByRole("button", { name: /Add .* to order/i }).first().click();
+  await expect(page.getByRole("button", { name: /Review order/i })).toBeVisible();
+
+  // Cart survives a reload (phone browsers suspend tabs aggressively).
+  await page.reload();
+  await expect(page.getByRole("button", { name: /Review order/i })).toBeVisible();
+
+  await page.getByRole("button", { name: /Review order/i }).click();
+  await expect(page.getByRole("dialog", { name: "Your order" })).toBeVisible();
+  await page.getByRole("button", { name: /Place order/i }).click();
   await expect(page.getByText(/Order placed/i)).toBeVisible({ timeout: 15_000 });
 
-  await page.getByRole("link", { name: /My Orders/i }).click();
+  // The session was opened lazily and the order is attached to it.
+  const session = await prisma.diningSession.findFirstOrThrow({
+    where: { tableId, status: "ACTIVE" },
+    include: { orders: true },
+  });
+  expect(session.orders).toHaveLength(1);
+
+  // A second phone at the same table joins the same session.
+  const join = await request.get(`/api/public/tables/${tableToken}`);
+  expect(join.ok()).toBeTruthy();
+  const joinBody = await join.json();
+  expect(joinBody.canOrder).toBe(true);
+  expect(joinBody.session.status).toBe("ACTIVE");
+  expect(joinBody.sessionToken).toBeTruthy();
+
+  const secondDevice = await browser.newContext();
+  const secondPage = await secondDevice.newPage();
+  await secondPage.goto(`/t/${tableToken}`);
+  await expect(secondPage.getByText(`Table ${tableNumber}`)).toBeVisible();
+  await expect(secondPage.getByPlaceholder(/Search the menu/i)).toBeVisible();
+  await secondDevice.close();
+
+  // Tracking screen shows the live stepper and the running bill.
+  await page.getByRole("link", { name: /Orders & bill/i }).click();
+  await expect(page).toHaveURL(new RegExp(`/t/${tableToken}/orders`));
+  await expect(page.getByRole("heading", { name: "Your order" })).toBeVisible();
   await expect(page.getByText(itemName).first()).toBeVisible();
+  await expect(page.getByText("Ordered", { exact: true }).first()).toBeVisible();
 
   const ordersOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );
   expect(ordersOverflow).toBeLessThanOrEqual(1);
+
+  await page.getByRole("button", { name: /Request bill/i }).click();
+  await expect(page.getByText(/Bill requested\. A team member will be with you/i)).toBeVisible({ timeout: 15_000 });
+
+  // A bad QR gets a friendly recovery screen, not a blank page.
+  const invalidPage = await browser.newPage();
+  await invalidPage.goto("/t/definitely-not-a-table");
+  await expect(invalidPage.getByRole("heading", { name: /open this table/i })).toBeVisible();
+  await invalidPage.close();
 });

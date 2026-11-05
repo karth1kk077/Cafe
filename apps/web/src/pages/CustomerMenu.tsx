@@ -1,110 +1,245 @@
-import { useMemo, useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, formatMoney, type PublicMenuResponse, type TableResponse } from "../lib/api";
+import {
+  api,
+  formatMoney,
+  type PublicMenuResponse,
+  type PublicMenuItem,
+  type TableResponse,
+} from "../lib/api";
 import { SOCKET_EVENTS, getSocket } from "../lib/socket";
-import { saveSession, loadSession, loadCart, saveCart } from "../lib/session";
-
-interface CartLine {
-  key: string;
-  menuItemId: string;
-  name: string;
-  variantId?: string;
-  variantName?: string;
-  addonIds: string[];
-  addonNames: string[];
-  unitPriceMinor: number;
-  quantity: number;
-  specialInstructions?: string;
-}
+import { saveSession, loadSession, loadCart, saveCart, type StoredCartLine } from "../lib/session";
+import { haptic, HAPTIC_SUCCESS } from "../lib/haptics";
+import { MenuHeader, type MenuStatus } from "../components/customer/MenuHeader";
+import { CategoryTabs } from "../components/customer/CategoryTabs";
+import { MenuItemCard } from "../components/customer/MenuItemCard";
+import { ItemSheet } from "../components/customer/ItemSheet";
+import { CartBar } from "../components/customer/CartBar";
+import { CartSheet } from "../components/customer/CartSheet";
+import { Toast, type ToastMessage, type ToastTone } from "../components/customer/Toast";
 
 function newIdempotencyKey() {
-  return (crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`);
+  return crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+}
+
+function MenuSkeleton() {
+  return (
+    <div className="mx-auto max-w-2xl space-y-4 p-4" aria-busy="true" aria-live="polite">
+      <div className="h-8 w-32 animate-pulse rounded bg-line" />
+      <div className="h-11 animate-pulse rounded-control bg-line" />
+      {[0, 1, 2].map((row) => (
+        <div key={row} className="card flex gap-3 p-3">
+          <div className="h-20 w-20 shrink-0 animate-pulse rounded-control bg-cream" />
+          <div className="flex-1 space-y-2 py-1">
+            <div className="h-4 w-2/3 animate-pulse rounded bg-line" />
+            <div className="h-3 w-full animate-pulse rounded bg-line" />
+            <div className="h-8 w-20 animate-pulse rounded-control bg-line" />
+          </div>
+        </div>
+      ))}
+      <span className="sr-only">Loading menu…</span>
+    </div>
+  );
+}
+
+function TableProblem({ message, retry }: { message: string; retry: () => void }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-cream p-4">
+      <div className="card w-full max-w-sm p-6 text-center">
+        <div aria-hidden className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-amber-soft text-2xl">
+          ⚠
+        </div>
+        <h1 className="display text-xl font-semibold">We couldn’t open this table</h1>
+        <p className="mt-2 text-sm text-muted">{message}</p>
+        <div className="mt-5 space-y-2">
+          <button type="button" className="btn btn-primary w-full" onClick={retry}>
+            Try again
+          </button>
+          <Link to="/" className="btn btn-ghost w-full">
+            Go to start
+          </Link>
+        </div>
+        <p className="mt-4 text-xs text-muted">If this keeps happening, please ask a team member for help.</p>
+      </div>
+    </div>
+  );
 }
 
 export function CustomerMenu() {
   const { tableCode = "" } = useParams();
   const queryClient = useQueryClient();
-  const [cart, setCart] = useState<CartLine[]>(() => loadCart(tableCode));
+  const [cart, setCart] = useState<StoredCartLine[]>(() => loadCart(tableCode));
   const [menuSearch, setMenuSearch] = useState("");
-  const [orderPlaced, setOrderPlaced] = useState(false);
-  const [activeCat, setActiveCat] = useState<string | null>(null);
-  const [customizing, setCustomizing] = useState<PublicMenuResponse["categories"][0]["items"][0] | null>(null);
-  const [customVariant, setCustomVariant] = useState<string | undefined>();
-  const [customAddons, setCustomAddons] = useState<string[]>([]);
-  const [customQty, setCustomQty] = useState(1);
-  const [customNotes, setCustomNotes] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [customizing, setCustomizing] = useState<PublicMenuItem | null>(null);
+  const [cartOpen, setCartOpen] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
+  // Kept across retries so a double tap or flaky network still creates one order.
+  const pendingKeyRef = useRef<string | null>(null);
 
-  const { data: menu } = useQuery<PublicMenuResponse>({
+  function showToast(text: string, tone: ToastTone = "success") {
+    setToast({ id: Date.now(), text, tone });
+  }
+
+  const {
+    data: menu,
+    error: menuError,
+    refetch: refetchMenu,
+  } = useQuery<PublicMenuResponse>({
     queryKey: ["menu"],
     queryFn: () => api.get("/public/menu"),
   });
 
-  const { data: tableInfo } = useQuery<TableResponse>({
+  const {
+    data: tableInfo,
+    error: tableError,
+    isLoading: tableLoading,
+    refetch: refetchTable,
+  } = useQuery<TableResponse>({
     queryKey: ["table", tableCode],
     queryFn: () => api.get(`/public/tables/${tableCode}`),
-    // Before a waiter confirms, the customer has no session token and therefore
-    // no authenticated socket room; poll so the waiting screen flips to the menu
-    // on its own instead of needing a manual refresh.
-    refetchInterval: (query) =>
-      query.state.data?.session?.status === "PENDING" ? 5000 : false,
+    // Legacy PENDING sessions still flip to ACTIVE after a waiter confirms.
+    refetchInterval: (query) => (query.state.data?.session?.status === "PENDING" ? 5000 : false),
   });
 
   useEffect(() => {
     saveCart(tableCode, cart);
   }, [cart, tableCode]);
 
-  // Persist the session-scoped token so tracking screens share the credential.
+  // A different cart means a different order body, so the previous idempotency
+  // key must not be reused (the server would replay the old order).
   useEffect(() => {
-    if (!tableInfo) return;
-    saveSession(
-      tableCode,
-      tableInfo.session && tableInfo.sessionToken
-        ? { token: tableInfo.sessionToken, sessionId: tableInfo.session.id }
-        : null
-    );
-  }, [tableInfo, tableCode]);
+    pendingKeyRef.current = null;
+  }, [cart]);
+
+  // Keep the session token for the tracking screen. Never erase a stored token
+  // just because the table has no active session — that token still authorises
+  // read-only access to a recently closed bill.
+  useEffect(() => {
+    if (!tableInfo?.sessionToken || !tableInfo.session) return;
+    saveSession(tableCode, { token: tableInfo.sessionToken, sessionId: tableInfo.session.id });
+  }, [tableInfo?.sessionToken, tableInfo?.session?.id, tableCode]);
 
   useEffect(() => {
     const token = tableInfo?.sessionToken ?? loadSession(tableCode)?.token ?? undefined;
     const socket = getSocket(token);
-    const onOrder = () => {
-      queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
-    };
-    const onMenu = () => queryClient.invalidateQueries({ queryKey: ["menu"] });
-    socket.on(SOCKET_EVENTS.ORDER_UPDATED, onOrder);
-    socket.on(SOCKET_EVENTS.ITEM_STATUS, onOrder);
-    socket.on(SOCKET_EVENTS.SESSION_CLOSED, onOrder);
-    socket.on(SOCKET_EVENTS.SESSION_REOPENED, onOrder);
-    socket.on(SOCKET_EVENTS.MENU_UPDATED, onMenu);
+    const refreshTable = () => queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
+    const refreshMenu = () => queryClient.invalidateQueries({ queryKey: ["menu"] });
+    socket.on(SOCKET_EVENTS.ORDER_UPDATED, refreshTable);
+    socket.on(SOCKET_EVENTS.ITEM_STATUS, refreshTable);
+    socket.on(SOCKET_EVENTS.SESSION_CLOSED, refreshTable);
+    socket.on(SOCKET_EVENTS.SESSION_REOPENED, refreshTable);
+    socket.on(SOCKET_EVENTS.MENU_UPDATED, refreshMenu);
     return () => {
-      socket.off(SOCKET_EVENTS.ORDER_UPDATED, onOrder);
-      socket.off(SOCKET_EVENTS.ITEM_STATUS, onOrder);
-      socket.off(SOCKET_EVENTS.SESSION_CLOSED, onOrder);
-      socket.off(SOCKET_EVENTS.SESSION_REOPENED, onOrder);
-      socket.off(SOCKET_EVENTS.MENU_UPDATED, onMenu);
+      socket.off(SOCKET_EVENTS.ORDER_UPDATED, refreshTable);
+      socket.off(SOCKET_EVENTS.ITEM_STATUS, refreshTable);
+      socket.off(SOCKET_EVENTS.SESSION_CLOSED, refreshTable);
+      socket.off(SOCKET_EVENTS.SESSION_REOPENED, refreshTable);
+      socket.off(SOCKET_EVENTS.MENU_UPDATED, refreshMenu);
     };
   }, [tableInfo?.sessionToken, tableCode, queryClient]);
 
-  const canOrder = tableInfo?.canOrder;
+  const categories = useMemo(() => menu?.categories ?? [], [menu]);
+  const canOrder = tableInfo?.canOrder ?? false;
   const orderable = tableInfo?.orderable ?? false;
   const canBrowseOrder = canOrder || orderable;
   const sessionStatus = tableInfo?.session?.status;
 
-  const subtotal = useMemo(
-    () => cart.reduce((a, l) => a + l.unitPriceMinor * l.quantity, 0),
-    [cart]
-  );
+  // Scroll-spy: the chip for the section whose heading passed under the sticky
+  // header wins. Runs on scroll and whenever filtering changes the layout.
+  const updateActiveCategory = useCallback(() => {
+    if (!categories.length) return;
+    const threshold = 210;
+    let current: string | null = null;
+    for (const category of categories) {
+      const section = sectionRefs.current[category.id];
+      if (section && section.getBoundingClientRect().top <= threshold) current = category.id;
+    }
+    const next = current ?? categories[0]?.id ?? null;
+    setActiveCategory((previous) => (previous === next ? previous : next));
+  }, [categories]);
+
+  useEffect(() => {
+    updateActiveCategory();
+    window.addEventListener("scroll", updateActiveCategory, { passive: true });
+    window.addEventListener("resize", updateActiveCategory);
+    return () => {
+      window.removeEventListener("scroll", updateActiveCategory);
+      window.removeEventListener("resize", updateActiveCategory);
+    };
+  }, [updateActiveCategory]);
+
+  const filtered = useMemo(() => {
+    const query = menuSearch.trim().toLowerCase();
+    if (!query) return categories;
+    return categories
+      .map((category) => ({
+        ...category,
+        items: category.items.filter(
+          (item) =>
+            item.name.toLowerCase().includes(query) || item.description?.toLowerCase().includes(query)
+        ),
+      }))
+      .filter((category) => category.items.length > 0);
+  }, [categories, menuSearch]);
+
+  const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
+  const subtotal = cart.reduce((sum, line) => sum + line.unitPriceMinor * line.quantity, 0);
+
+  function addLine(line: StoredCartLine) {
+    setCart((previous) => {
+      const existing = previous.find((entry) => entry.key === line.key);
+      if (existing) {
+        return previous.map((entry) =>
+          entry.key === line.key ? { ...entry, quantity: entry.quantity + line.quantity } : entry
+        );
+      }
+      return [...previous, line];
+    });
+    haptic();
+    showToast(`${line.name} added`, "success");
+  }
+
+  function addSimpleItem(item: PublicMenuItem) {
+    addLine({
+      key: item.id,
+      menuItemId: item.id,
+      name: item.name,
+      addonIds: [],
+      addonNames: [],
+      unitPriceMinor: item.priceMinor,
+      quantity: 1,
+    });
+  }
+
+  function changeQuantity(key: string, delta: number) {
+    setCart((previous) =>
+      previous
+        .map((line) => (line.key === key ? { ...line, quantity: line.quantity + delta } : line))
+        .filter((line) => line.quantity > 0)
+    );
+    haptic(8);
+  }
+
+  function selectCategory(id: string) {
+    setActiveCategory(id);
+    sectionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   /**
-   * Open the table's session lazily (never on a bare scan) and return the
-   * signed token. A second phone at the same table receives the same session.
+   * Open or join the table's session at the moment of the first order. A second
+   * phone at the same table receives the same session and token.
    */
   async function ensureSessionToken(): Promise<string> {
     if (tableInfo?.sessionToken) return tableInfo.sessionToken;
     const fresh = await api.post<TableResponse>(`/public/tables/${tableCode}/session`, {});
     queryClient.setQueryData(["table", tableCode], fresh);
+    if (fresh.sessionToken && fresh.session) {
+      saveSession(tableCode, { token: fresh.sessionToken, sessionId: fresh.session.id });
+    }
     if (!fresh.sessionToken) {
       throw new Error(
         fresh.session?.status === "BILL_REQUESTED" || fresh.session?.status === "PAYMENT_PENDING"
@@ -120,364 +255,194 @@ export function CustomerMenu() {
       const token = await ensureSessionToken();
       try {
         return await api.post("/public/orders", payload, token);
-      } catch (e) {
-        // A tab can outlive its signed session token (or be resumed from the
-        // back/forward cache). Re-resolve the QR once and retry with the same
-        // idempotency key, so a double tap still creates exactly one order.
-        if ((e as Error & { status?: number }).status === 401) {
+      } catch (error) {
+        // A resumed tab can hold a token for an old session. Re-resolve the QR
+        // once and retry with the same payload (and idempotency key).
+        if ((error as Error & { status?: number }).status === 401) {
           const fresh = await api.get<TableResponse>(`/public/tables/${tableCode}`);
           queryClient.setQueryData(["table", tableCode], fresh);
-          if (fresh.sessionToken) {
-            return api.post("/public/orders", payload, fresh.sessionToken);
-          }
+          if (fresh.sessionToken) return api.post("/public/orders", payload, fresh.sessionToken);
         }
-        throw e;
+        throw error;
       }
     },
     onSuccess: () => {
+      pendingKeyRef.current = null;
       setCart([]);
       saveCart(tableCode, []);
       setOrderError(null);
-        setOrderPlaced(true);
-        queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
-      setTimeout(() => setOrderPlaced(false), 4000);
+      setCartOpen(false);
+      haptic(HAPTIC_SUCCESS);
+      showToast("Order placed — the kitchen has it.", "success");
+      queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
+      queryClient.invalidateQueries({ queryKey: ["session-orders"] });
     },
-    onError: (e: Error) => {
-      setOrderError(e.message);
-      // A 401/409 often means the token expired/closed; re-resolve the QR to
-      // mint a fresh session token silently where possible.
-      if ((e as Error & { status?: number }).status === 401 || (e as Error & { status?: number }).status === 409) {
+    onError: (error: Error) => {
+      setOrderError(error.message);
+      if ((error as Error & { status?: number }).status === 401 || (error as Error & { status?: number }).status === 409) {
         queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
       }
     },
   });
 
-  function openCustomizer(item: PublicMenuResponse["categories"][0]["items"][0]) {
-    setCustomizing(item);
-    setCustomVariant(item.variants[0]?.id);
-    setCustomAddons([]);
-    setCustomQty(1);
-    setCustomNotes("");
-  }
-
-  function addSimpleItem(item: PublicMenuResponse["categories"][0]["items"][0]) {
-    setCart((prev) => {
-      const key = item.id;
-      const existing = prev.find((l) => l.key === key);
-      if (existing) {
-        return prev.map((l) => (l.key === key ? { ...l, quantity: l.quantity + 1 } : l));
-      }
-      return [
-        ...prev,
-        {
-          key,
-          menuItemId: item.id,
-          name: item.name,
-          addonIds: [],
-          addonNames: [],
-          unitPriceMinor: item.priceMinor,
-          quantity: 1,
-        },
-      ];
+  function placeOrder() {
+    if (!cart.length || orderMutation.isPending) return;
+    setOrderError(null);
+    const idempotencyKey = pendingKeyRef.current ?? newIdempotencyKey();
+    pendingKeyRef.current = idempotencyKey;
+    orderMutation.mutate({
+      idempotencyKey,
+      items: cart.map((line) => ({
+        menuItemId: line.menuItemId,
+        variantId: line.variantId,
+        addonIds: line.addonIds,
+        quantity: line.quantity,
+        specialInstructions: line.specialInstructions,
+      })),
     });
   }
 
-  function addFromCustomizer() {
-    if (!customizing) return;
-    const variant = customizing.variants.find((v) => v.id === customVariant);
-    const addons = customizing.addons.filter((a) => customAddons.includes(a.id));
-    const unit = customizing.priceMinor + (variant?.priceDeltaMinor ?? 0) + addons.reduce((s, a) => s + a.priceMinor, 0);
-    const key = [customizing.id, customVariant ?? "", [...customAddons].sort().join(","), customNotes].join("|");
-    setCart((prev) => {
-      const existing = prev.find((l) => l.key === key);
-      if (existing) {
-        return prev.map((l) => (l.key === key ? { ...l, quantity: l.quantity + customQty } : l));
-      }
-      return [
-        ...prev,
-        {
-          key,
-          menuItemId: customizing.id,
-          name: customizing.name,
-          variantId: customVariant,
-          variantName: variant?.name,
-          addonIds: addons.map((a) => a.id),
-          addonNames: addons.map((a) => a.name),
-          unitPriceMinor: unit,
-          quantity: customQty,
-          specialInstructions: customNotes.trim() || undefined,
-        },
-      ];
-    });
-    setCustomizing(null);
-  }
+  const tableStatus = ((): MenuStatus | null => {
+    if (!tableInfo) return null;
+    if (sessionStatus === "PENDING") {
+      return {
+        tone: "warn",
+        message: "Your table is waiting for a team member to confirm. Browse and build your order in the meantime.",
+      } satisfies MenuStatus;
+    }
+    if (sessionStatus === "BILL_REQUESTED" || sessionStatus === "PAYMENT_PENDING") {
+      return {
+        tone: "warn",
+        message: "Ordering is paused while your bill is settled. Ask a team member if you would like to add something.",
+      } satisfies MenuStatus;
+    }
+    if (!orderable) {
+      return {
+        tone: "warn",
+        message: "This table isn’t taking orders right now. Please ask a team member for help.",
+      } satisfies MenuStatus;
+    }
+    if (!canOrder) {
+      return {
+        tone: "info",
+        message: "Browse freely — your table opens automatically when you place your first order.",
+      } satisfies MenuStatus;
+    }
+    return null;
+  })();
 
-  function changeQty(key: string, delta: number) {
-    setCart((prev) =>
-      prev
-        .map((l) => (l.key === key ? { ...l, quantity: l.quantity + delta } : l))
-        .filter((l) => l.quantity > 0)
+  if (tableLoading) return <MenuSkeleton />;
+
+  if (tableError) {
+    const status = (tableError as Error & { status?: number }).status;
+    return (
+      <TableProblem
+        message={
+          status === 404
+            ? "This QR code doesn’t match a table. Please scan the code on your table again."
+            : tableError.message
+        }
+        retry={() => refetchTable()}
+      />
     );
   }
 
-  async function submitOrder() {
-    if (!cart.length) return;
-    setOrderError(null);
-    const payload = {
-      idempotencyKey: newIdempotencyKey(),
-      items: cart.map((l) => ({
-        menuItemId: l.menuItemId,
-        variantId: l.variantId,
-        addonIds: l.addonIds,
-        quantity: l.quantity,
-        specialInstructions: l.specialInstructions,
-      })),
-    };
-    orderMutation.mutate(payload);
-  }
-
-  const categories = useMemo(() => menu?.categories ?? [], [menu]);
-  const filtered = useMemo(() => {
-    const q = menuSearch.trim().toLowerCase();
-    if (!q) return categories;
-    return categories
-      .map((c) => ({
-        ...c,
-        items: c.items.filter(
-          (item) => item.name.toLowerCase().includes(q) || item.description?.toLowerCase().includes(q)
-        ),
-      }))
-      .filter((c) => c.items.length > 0);
-  }, [categories, menuSearch]);
-  const shown = activeCat ? filtered.filter((c) => c.id === activeCat) : filtered;
-
   return (
-    <div className="min-h-screen pb-40">
-      {/* Header + category bar stick together, so the bar never slides under
-          the header when the "ordering closed" banner makes it taller. */}
+    <div className="min-h-screen bg-cream pb-32">
       <div className="sticky top-0 z-20">
-        <header className="bg-slate-900 text-white px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm opacity-70">{menu?.settings.cafeName ?? "Smart Café"}</div>
-              <div className="text-lg font-bold">Table {tableInfo?.table.number ?? "…"}</div>
-            </div>
-            <div className="flex gap-2">
-              <Link to={`/t/${tableCode}/orders`} className="btn btn-ghost !text-white !border-white/30 text-sm">
-                My Orders / Bill
-              </Link>
-            </div>
-          </div>
-          <div className="mt-2">
-            <input
-              className="input w-full !bg-white/10 !text-white !placeholder-white/60 !border-white/30"
-              placeholder="Search menu…"
-              value={menuSearch}
-              onChange={(e) => setMenuSearch(e.target.value)}
-            />
-          </div>
-          {!canOrder && (
-            <div className="mt-2 rounded-lg bg-orange-600/20 border border-orange-400/40 px-3 py-2 text-sm space-y-2">
-              {sessionStatus === "PENDING" ? (
-                <div>Waiting for a waiter to confirm your table. You can browse the menu in the meantime.</div>
-              ) : sessionStatus === "BILL_REQUESTED" || sessionStatus === "PAYMENT_PENDING" ? (
-                <div>Ordering is paused while your bill is being settled. Please ask a team member if you would like to order more.</div>
-              ) : !orderable ? (
-                <div>This table is not accepting orders right now. Please ask a team member for help.</div>
-              ) : (
-                <div>Browse away — your table opens automatically when you place your first order.</div>
-              )}
-            </div>
-          )}
-          {orderPlaced && (
-            <div className="mt-2 rounded-lg bg-emerald-600/20 border border-emerald-400/40 px-3 py-2 text-sm">
-              Order placed ✓
-            </div>
-          )}
-        </header>
-
-        <nav className="flex gap-2 overflow-x-auto bg-white border-b px-3 py-2">
-          <button
-            className={`chip whitespace-nowrap ${activeCat === null ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
-            onClick={() => setActiveCat(null)}
-          >
-            All
-          </button>
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              className={`chip whitespace-nowrap ${activeCat === c.id ? "!bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
-              onClick={() => setActiveCat(c.id)}
-            >
-              {c.name}
-            </button>
-          ))}
-        </nav>
+        <MenuHeader
+          cafeName={menu?.settings.cafeName ?? "Smart Café"}
+          tableNumber={tableInfo?.table.number ?? "…"}
+          search={menuSearch}
+          onSearchChange={setMenuSearch}
+          status={tableStatus}
+          ordersHref={`/t/${tableCode}/orders`}
+        />
+        <CategoryTabs categories={filtered} activeId={activeCategory} onSelect={selectCategory} />
       </div>
 
-      <main className="p-3 space-y-4">
-        {shown.map((cat) => (
-          <section key={cat.id}>
-            <h2 className="px-1 mb-2 text-sm font-bold uppercase tracking-wide text-slate-500">{cat.name}</h2>
+      <main className="mx-auto max-w-2xl space-y-6 p-3 pt-4">
+        {menuError && (
+          <div className="card p-4 text-sm" role="alert">
+            <p className="font-semibold">The menu didn’t load.</p>
+            <p className="mt-1 text-muted">{menuError.message}</p>
+            <button type="button" className="btn btn-ghost mt-3" onClick={() => refetchMenu()}>
+              Try again
+            </button>
+          </div>
+        )}
+
+        {!menu && !menuError && <MenuSkeleton />}
+
+        {filtered.map((category) => (
+          <section
+            key={category.id}
+            id={`menu-${category.id}`}
+            ref={(element) => {
+              sectionRefs.current[category.id] = element;
+            }}
+            className="scroll-mt-52"
+            aria-labelledby={`menu-heading-${category.id}`}
+          >
+            <h2
+              id={`menu-heading-${category.id}`}
+              className="mb-2 px-1 text-sm font-bold uppercase tracking-[0.12em] text-muted"
+            >
+              {category.name}
+            </h2>
             <div className="grid gap-3">
-              {cat.items.map((item) => (
-                <div key={item.id} className="card p-3 flex gap-3">
-                  <div className="w-20 h-20 rounded-lg bg-slate-100 flex items-center justify-center overflow-hidden shrink-0">
-                    {item.imageUrl ? (
-                      <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <span className="text-2xl">☕</span>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between gap-2">
-                      <h3 className="font-semibold">{item.name}</h3>
-                      <div className="font-bold whitespace-nowrap">{formatMoney(item.priceMinor)}</div>
-                    </div>
-                    {item.description && <p className="text-sm text-slate-500 mt-0.5">{item.description}</p>}
-                    <div className="flex gap-1 mt-1 flex-wrap">
-                      {item.dietaryTags.map((t) => (
-                        <span key={t} className="badge bg-green-100 text-green-700">{t}</span>
-                      ))}
-                      {item.allergens.length > 0 && (
-                        <span className="badge bg-amber-100 text-amber-700">contains {item.allergens.join(", ")}</span>
-                      )}
-                    </div>
-                    {!item.isAvailable ? (
-                      <span className="badge bg-slate-200 text-slate-600 mt-2">Unavailable</span>
-                    ) : canBrowseOrder ? (
-                      <button
-                        className="btn btn-primary mt-2 text-sm"
-                        onClick={() =>
-                          item.variants.length || item.addons.length
-                            ? openCustomizer(item)
-                            : addSimpleItem(item)
-                        }
-                      >
-                        {item.variants.length || item.addons.length ? "Customize" : "Add"}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
+              {category.items.map((item) => (
+                <MenuItemCard key={item.id} item={item} onAdd={addSimpleItem} onCustomize={setCustomizing} />
               ))}
             </div>
           </section>
         ))}
-        {!categories.length && <div className="p-8 text-center text-slate-500">Loading menu…</div>}
+
+        {menu && !filtered.length && (
+          <div className="card p-8 text-center">
+            <p className="display text-lg font-semibold">
+              {menuSearch.trim() ? "Nothing matched that search" : "The menu is being updated"}
+            </p>
+            <p className="mt-1 text-sm text-muted">
+              {menuSearch.trim() ? "Try a shorter word, or clear the search to see everything." : "Please ask a team member for help."}
+            </p>
+            {menuSearch.trim() && (
+              <button type="button" className="btn btn-ghost mt-4" onClick={() => setMenuSearch("")}>
+                Clear search
+              </button>
+            )}
+          </div>
+        )}
       </main>
 
-      {cart.length > 0 && (
-        <div className="fixed bottom-0 inset-x-0 z-30 bg-white border-t p-3 pb-safe">
-          <div className="flex justify-between text-sm text-slate-600 mb-2">
-            <span>{cart.reduce((s, l) => s + l.quantity, 0)} items</span>
-            <span>Subtotal {formatMoney(subtotal)}</span>
-          </div>
-          {orderError && <div className="mb-2 rounded bg-red-50 text-red-700 text-sm px-3 py-2">{orderError}</div>}
-          <div className="flex gap-2">
-            <div className="flex-1 space-y-1 max-h-32 overflow-y-auto">
-              {cart.map((l) => (
-                <div key={l.key} className="flex items-center justify-between text-sm">
-                  <span className="truncate">
-                    {l.quantity}× {l.name}
-                    {l.variantName ? ` (${l.variantName})` : ""}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="btn btn-ghost !px-3 !py-2"
-                      aria-label={`Remove one ${l.name}`}
-                      onClick={() => changeQty(l.key, -1)}
-                    >
-                      −
-                    </button>
-                    <span>{l.quantity}</span>
-                    <button
-                      className="btn btn-ghost !px-3 !py-2"
-                      aria-label={`Add one ${l.name}`}
-                      onClick={() => changeQty(l.key, 1)}
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <button
-            className="btn btn-accent w-full mt-2"
-            onClick={submitOrder}
-            disabled={orderMutation.isPending || !canBrowseOrder}
-          >
-            {orderMutation.isPending ? "Placing order…" : `Place Order · ${formatMoney(subtotal)}`}
-          </button>
-        </div>
-      )}
+      {!cartOpen && <CartBar itemCount={itemCount} subtotalMinor={subtotal} onOpen={() => setCartOpen(true)} />}
 
-      {customizing && (
-        <div className="fixed inset-0 z-40 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-4 pb-safe max-h-[90dvh] overflow-y-auto">
-            <div className="flex justify-between items-start mb-3">
-              <h3 className="text-lg font-bold">{customizing.name}</h3>
-              <button className="btn btn-ghost !px-3" aria-label="Close" onClick={() => setCustomizing(null)}>✕</button>
-            </div>
-            {customizing.variants.length > 0 && (
-              <div className="mb-3">
-                <div className="text-sm font-semibold mb-1">Size</div>
-                <div className="flex gap-2 flex-wrap">
-                  {customizing.variants.map((v) => (
-                    <button
-                      key={v.id}
-                      className={`chip ${customVariant === v.id ? "!bg-slate-900 text-white" : "bg-slate-100"}`}
-                      onClick={() => setCustomVariant(v.id)}
-                    >
-                      {v.name} {v.priceDeltaMinor ? `+${formatMoney(v.priceDeltaMinor)}` : ""}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {customizing.addons.length > 0 && (
-              <div className="mb-3">
-                <div className="text-sm font-semibold mb-1">Add-ons</div>
-                <div className="flex gap-2 flex-wrap">
-                  {customizing.addons.map((a) => (
-                    <button
-                      key={a.id}
-                      className={`badge ${customAddons.includes(a.id) ? "!bg-slate-900 text-white" : "bg-slate-100"}`}
-                      onClick={() =>
-                        setCustomAddons((prev) =>
-                          prev.includes(a.id) ? prev.filter((x) => x !== a.id) : [...prev, a.id]
-                        )
-                      }
-                    >
-                      {a.name} +{formatMoney(a.priceMinor)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="mb-3">
-              <div className="text-sm font-semibold mb-1">Special instructions</div>
-              <input
-                className="input"
-                maxLength={200}
-                value={customNotes}
-                onChange={(e) => setCustomNotes(e.target.value)}
-                placeholder="e.g. less sugar, no onions"
-              />
-            </div>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-semibold">Quantity</span>
-              <div className="flex items-center gap-3">
-                <button className="btn btn-ghost !px-3" onClick={() => setCustomQty((q) => Math.max(1, q - 1))}>−</button>
-                <span className="font-bold">{customQty}</span>
-                <button className="btn btn-ghost !px-3" onClick={() => setCustomQty((q) => q + 1)}>+</button>
-              </div>
-            </div>
-            <button className="btn btn-accent w-full" onClick={addFromCustomizer}>
-              Add to cart
-            </button>
-          </div>
-        </div>
+      <CartSheet
+        open={cartOpen}
+        lines={cart}
+        subtotalMinor={subtotal}
+        onClose={() => setCartOpen(false)}
+        onQuantity={changeQuantity}
+        onPlaceOrder={placeOrder}
+        placing={orderMutation.isPending}
+        error={orderError}
+        canOrder={canBrowseOrder}
+      />
+
+      <ItemSheet
+        key={customizing?.id ?? "closed"}
+        item={customizing}
+        open={!!customizing}
+        onClose={() => setCustomizing(null)}
+        onAdd={addLine}
+      />
+
+      <Toast toast={toast} onDismiss={() => setToast(null)} className="bottom-24" />
+
+      {itemCount > 0 && (
+        <span className="sr-only" aria-live="polite">
+          {itemCount} {itemCount === 1 ? "item" : "items"} in your order, subtotal {formatMoney(subtotal)}.
+        </span>
       )}
     </div>
   );

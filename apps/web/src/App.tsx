@@ -4,6 +4,7 @@ import { useAuth } from "./lib/auth";
 
 // Route-level code splitting keeps the customer menu (the QR entry point) small
 // on a phone; staff tools and the admin console load only when visited.
+const LandingPage = lazy(() => import("./pages/LandingPage").then((m) => ({ default: m.LandingPage })));
 const CustomerMenu = lazy(() => import("./pages/CustomerMenu").then((m) => ({ default: m.CustomerMenu })));
 const OrderTracking = lazy(() => import("./pages/OrderTracking").then((m) => ({ default: m.OrderTracking })));
 const LoginPage = lazy(() => import("./pages/LoginPage").then((m) => ({ default: m.LoginPage })));
@@ -55,7 +56,7 @@ export function App() {
       <OfflineBanner />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
-          <Route path="/" element={<Navigate to="/login" replace />} />
+          <Route path="/" element={<LandingPage />} />
           <Route path="/t/:tableCode" element={<CustomerMenu />} />
           <Route path="/t/:tableCode/orders" element={<OrderTracking />} />
           <Route path="/login" element={<LoginPage />} />
