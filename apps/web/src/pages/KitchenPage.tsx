@@ -33,10 +33,10 @@ const FILTERS: Array<{ key: FilterKey; label: string; match: OrderItemStatus[] }
 
 const ITEM_STYLE: Record<OrderItemStatus, string> = {
   QUEUED: "bg-cream text-espresso",
-  PREPARING: "bg-amber-100 text-amber-800",
-  READY: "bg-green-100 text-green-800",
-  SERVED: "bg-emerald-50 text-emerald-700",
-  CANCELLED: "bg-red-100 text-red-700",
+  PREPARING: "bg-amber-soft text-amber-ink",
+  READY: "bg-forest-soft text-forest",
+  SERVED: "bg-cream text-muted",
+  CANCELLED: "bg-danger-soft text-danger",
 };
 
 function minutesSince(iso: string) {
@@ -175,7 +175,7 @@ export function KitchenPage() {
             </div>
             <div className="flex gap-2">
               {!soundReady ? (
-                <button className="btn btn-accent !bg-amber-500 text-xs" onClick={enableSound}>
+                <button className="btn btn-accent text-xs" onClick={enableSound}>
                   Enable sound
                 </button>
               ) : (

@@ -42,19 +42,19 @@ interface ReadyItem {
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  AVAILABLE: "bg-green-100 text-green-800",
-  OCCUPIED: "bg-blue-100 text-blue-800",
-  BILL_REQUESTED: "bg-amber-100 text-amber-800",
-  PAYMENT_PENDING: "bg-orange-100 text-orange-800",
+  AVAILABLE: "bg-forest-soft text-forest",
+  OCCUPIED: "bg-espresso text-white",
+  BILL_REQUESTED: "bg-amber-soft text-amber-ink",
+  PAYMENT_PENDING: "bg-amber-soft text-amber-ink",
   CLOSED: "bg-cream text-muted",
 };
 
 const ITEM_STYLE: Record<OrderItemStatus, string> = {
   QUEUED: "bg-cream text-espresso",
-  PREPARING: "bg-amber-100 text-amber-800",
-  READY: "bg-green-100 text-green-800",
-  SERVED: "bg-emerald-50 text-emerald-700",
-  CANCELLED: "bg-red-100 text-red-700",
+  PREPARING: "bg-amber-soft text-amber-ink",
+  READY: "bg-forest-soft text-forest",
+  SERVED: "bg-cream text-muted",
+  CANCELLED: "bg-danger-soft text-danger",
 };
 
 function minutesSince(iso?: string | null) {
@@ -306,7 +306,7 @@ export function WaiterPage() {
             return (
               <button
                 key={t.id}
-                className={`card p-3 text-left ${t.status === "BILL_REQUESTED" ? "!border-amber-400" : ""}`}
+                className={`card p-3 text-left ${t.status === "BILL_REQUESTED" ? "!border-amber-ink" : ""}`}
                 onClick={() => setSelected(t)}
               >
                 <div className="flex justify-between items-start">
@@ -464,7 +464,7 @@ export function WaiterPage() {
                             <span>{formatMoney(b.totalMinor)}</span>
                           </div>
                           {paid > 0 && (
-                            <div className="flex justify-between text-emerald-700">
+                            <div className="flex justify-between text-forest">
                               <span>Paid</span>
                               <span>{formatMoney(paid)}</span>
                             </div>
