@@ -262,6 +262,22 @@ a:focus-visible {
   }
 }
 
+/* QR print sheets: A4 portrait, six cards per page. Browsers honour @page for
+   the print dialog's paper size; the cards themselves use mm units so the
+   layout stays predictable at 100% scale. */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+  html,
+  body {
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
 /* Phone-targeted overrides. Kept in `base` (unlayered), so they beat Tailwind's
    `utilities` layer regardless of class order — no `!important` needed. */
 @media (max-width: 640px) {
