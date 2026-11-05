@@ -15,6 +15,7 @@ export async function updateSettings(data: Partial<{
   taxRateBps: number;
   serviceChargeBps: number;
   roundingEnabled: boolean;
+  upiId: string | null;
 }>) {
   await getSettings();
   return prisma.settings.update({ where: { id: "singleton" }, data });
@@ -26,7 +27,8 @@ export async function getPublicMenu() {
     orderBy: { sortOrder: "asc" },
     include: {
       items: {
-        where: { isAvailable: true },
+        // Unavailable items stay visible so the customer sees an explicit
+        // "Unavailable" state instead of the menu shifting under them.
         orderBy: { sortOrder: "asc" },
         include: {
           variants: { where: { isActive: true } },
@@ -38,12 +40,30 @@ export async function getPublicMenu() {
   return categories;
 }
 
+/** Full menu for the admin editor, including inactive categories/items. */
+export async function getAdminMenu() {
+  return prisma.menuCategory.findMany({
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    include: {
+      items: {
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        include: {
+          variants: { orderBy: { name: "asc" } },
+          addons: { orderBy: { name: "asc" } },
+        },
+      },
+    },
+  });
+}
+
 export async function resolveTableByCode(qrToken: string) {
   const table = await prisma.cafeTable.findUnique({
     where: { qrToken },
     include: {
       sessions: {
-        where: { status: { in: ["ACTIVE", "BILL_REQUESTED", "PAYMENT_PENDING"] } },
+          // PENDING is included so the customer sees "waiting for staff" instead
+          // of a Start-ordering button; `canOrder` still requires ACTIVE.
+          where: { status: { in: ["PENDING", "ACTIVE", "BILL_REQUESTED", "PAYMENT_PENDING"] } },
         orderBy: { openedAt: "desc" },
         take: 1,
       },

@@ -43,4 +43,5 @@ export const SOCKET_EVENTS = {
   SESSION_CLOSED: "session.closed",
   SESSION_REOPENED: "session.reopened",
   ASSISTANCE_REQUESTED: "assistance_request.created",
+  MENU_UPDATED: "menu.updated",
 } as const;

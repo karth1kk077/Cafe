@@ -134,7 +134,7 @@ export function TablesQrPanel() {
     queryFn: () => api.get("/staff/admin/settings"),
   });
 
-  const tables = tablesQuery.data?.tables ?? [];
+  const tables = useMemo(() => tablesQuery.data?.tables ?? [], [tablesQuery.data]);
   // Derived from the list so a refetch (edit, rotate) updates open panels too.
   const preview = previewId ? (tables.find((t) => t.id === previewId) ?? null) : null;
   const printTable = printId ? (tables.find((t) => t.id === printId) ?? null) : null;
@@ -179,14 +179,11 @@ export function TablesQrPanel() {
   });
 
   // Render the QR preview whenever the selected table (or its token) changes.
+  const previewQrUrl = preview?.qrUrl ?? null;
   useEffect(() => {
     let cancelled = false;
-    if (!preview) {
-      setQrPng("");
-      setQrError("");
-      return;
-    }
-    renderQrPng(preview.qrUrl)
+    if (!previewQrUrl) return;
+    renderQrPng(previewQrUrl)
       .then((value) => {
         if (!cancelled) setQrPng(value);
       })
@@ -196,7 +193,7 @@ export function TablesQrPanel() {
     return () => {
       cancelled = true;
     };
-  }, [preview?.qrUrl]);
+  }, [previewQrUrl]);
 
   async function copyLink(table: AdminTable) {
     try {

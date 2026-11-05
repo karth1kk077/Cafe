@@ -2,25 +2,78 @@ import { prisma } from "../lib/prisma.js";
 import { ConflictError, NotFoundError, SessionClosedError } from "../lib/errors.js";
 import type { SessionStatus } from "@prisma/client";
 
-const ACTIVE_STATUSES: SessionStatus[] = ["ACTIVE", "BILL_REQUESTED", "PAYMENT_PENDING"];
+const ACTIVE_STATUSES: SessionStatus[] = [
+  "PENDING",
+  "ACTIVE",
+  "BILL_REQUESTED",
+  "PAYMENT_PENDING",
+];
 
 export interface Actor {
   id: string;
   role: string;
 }
 
-async function lockTableSession(
-  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
-  tableId: string
-) {
-  const rows = await tx.$queryRaw<Array<{ id: string; status: string }>>`
-    SELECT id, status FROM "DiningSession"
-    WHERE "tableId" = ${tableId}::uuid AND status <> 'CLOSED'
-    ORDER BY "openedAt" DESC
-    LIMIT 1
-    FOR UPDATE
-  `;
-  return rows[0] ?? null;
+/**
+ * A customer at a table can ask to start ordering from the QR page. This
+ * creates a PENDING session: nobody can order yet, but the request appears on
+ * the waiter dashboard for a one-tap confirmation. Existing open sessions are
+ * returned unchanged so a double tap is harmless.
+ */
+export async function requestSession(tableId: string) {
+  return prisma.$transaction(async (tx) => {
+    const table = await tx.cafeTable.findUnique({ where: { id: tableId } });
+    if (!table || !table.isActive) throw new NotFoundError("Table not found");
+
+    await tx.$queryRaw`SELECT id FROM "CafeTable" WHERE id = ${tableId}::uuid FOR UPDATE`;
+
+    const existing = await tx.diningSession.findFirst({
+      where: { tableId, status: { in: ACTIVE_STATUSES } },
+      orderBy: { openedAt: "desc" },
+    });
+    if (existing) return existing;
+
+    const session = await tx.diningSession.create({
+      data: { tableId, status: "PENDING", openedBy: null },
+    });
+    await tx.cafeTable.update({ where: { id: tableId }, data: { status: "OCCUPIED" } });
+    await tx.auditLog.create({
+      data: {
+        actorId: null,
+        action: "SESSION_REQUESTED",
+        entityType: "DiningSession",
+        entityId: session.id,
+        metadata: { tableId },
+      },
+    });
+    return session;
+  });
+}
+
+/** Waiter confirmation of a customer-requested PENDING session. */
+export async function confirmSession(sessionId: string, actor: Actor) {
+  return prisma.$transaction(async (tx) => {
+    const session = await tx.diningSession.findUnique({ where: { id: sessionId } });
+    if (!session) throw new NotFoundError("Session not found");
+    if (session.status === "CLOSED") throw new ConflictError("Session is closed", "SESSION_CLOSED");
+    if (session.status !== "PENDING") return session;
+
+    const updated = await tx.diningSession.update({
+      where: { id: sessionId },
+      data: { status: "ACTIVE", openedBy: actor.id },
+    });
+    await tx.cafeTable.update({ where: { id: session.tableId }, data: { status: "OCCUPIED" } });
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: "SESSION_CONFIRMED",
+        entityType: "DiningSession",
+        entityId: session.id,
+        metadata: { tableId: session.tableId },
+      },
+    });
+    return updated;
+  });
 }
 
 export async function openSession(tableId: string, actor: Actor) {

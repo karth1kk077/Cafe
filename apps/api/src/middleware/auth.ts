@@ -8,6 +8,7 @@ import {
   type CustomerSessionClaim,
 } from "../lib/customerSession.js";
 import type { Role } from "@cafe/shared";
+import { prisma } from "../lib/prisma.js";
 
 export interface AuthUser {
   id: string;
@@ -36,7 +37,7 @@ export function verifyToken(token: string): AuthUser {
   return jwt.verify(token, config.JWT_SECRET) as AuthUser;
 }
 
-export function authenticate(req: Request, _res: Response, next: NextFunction): void {
+export async function authenticate(req: Request, _res: Response, next: NextFunction): Promise<void> {
   try {
     const header = req.headers.authorization;
     let token: string | undefined;
@@ -44,9 +45,18 @@ export function authenticate(req: Request, _res: Response, next: NextFunction): 
     else if (req.cookies?.[AUTH_COOKIE]) token = req.cookies[AUTH_COOKIE];
 
     if (!token) throw new UnauthorizedError();
-    const user = verifyToken(token);
-    if (!user?.id || !user.role) throw new UnauthorizedError("Invalid token payload");
-    req.user = user;
+    const claims = verifyToken(token);
+    if (!claims?.id || !claims.role) throw new UnauthorizedError("Invalid token payload");
+
+    // Re-check the account on every request: a deactivated staff member or a
+    // changed role must take effect immediately, not in up to 12 hours.
+    const user = await prisma.user.findUnique({
+      where: { id: claims.id },
+      select: { id: true, email: true, name: true, role: true, isActive: true },
+    });
+    if (!user || !user.isActive) throw new UnauthorizedError("Account is deactivated");
+
+    req.user = { id: user.id, email: user.email, name: user.name, role: user.role as Role };
     next();
   } catch {
     next(new UnauthorizedError("Invalid or expired token"));

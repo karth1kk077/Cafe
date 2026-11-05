@@ -51,6 +51,10 @@ export async function transitionOrderItem(input: TransitionInput) {
     if (!isTransitionAllowed(from, to)) {
       throw new ConflictError(`Invalid item transition ${from} -> ${to}`, "INVALID_TRANSITION");
     }
+    // Customers may only withdraw a dish before the kitchen has picked it up.
+    if (source === "CUSTOMER" && !(from === "QUEUED" && to === "CANCELLED")) {
+      throw new ForbiddenError("You can only cancel a dish that has not started preparation");
+    }
     if (source === "STAFF") {
       if (!input.actor || !canRoleTransition(input.actor.role, from, to)) {
         throw new ForbiddenError("Your role cannot perform this item transition");
@@ -128,6 +132,27 @@ export async function transitionOrderItem(input: TransitionInput) {
 
 export async function cancelOrderItem(itemId: string, actor: ItemActor, reason?: string) {
   return transitionOrderItem({ itemId, toStatus: "CANCELLED", actor, source: "STAFF", reason });
+}
+
+/**
+ * Customer-initiated cancellation. Ownership is checked against the session in
+ * the signed token before the shared transition path enforces QUEUED-only.
+ */
+export async function cancelCustomerOrderItem(itemId: string, sessionId: string, reason?: string) {
+  const item = await prisma.orderItem.findUnique({
+    where: { id: itemId },
+    include: { order: { select: { sessionId: true } } },
+  });
+  if (!item || item.order.sessionId !== sessionId) {
+    throw new NotFoundError("Order item not found");
+  }
+  return transitionOrderItem({
+    itemId,
+    toStatus: "CANCELLED",
+    actor: null,
+    source: "CUSTOMER",
+    reason: reason ?? "Cancelled by customer",
+  });
 }
 
 /** All dishes currently READY and awaiting collection, oldest first (spec 8.2). */

@@ -2,6 +2,7 @@ import { Server as HttpServer } from "http";
 import { Server as SocketServer, type Socket } from "socket.io";
 import { verifyToken, type AuthUser } from "../middleware/auth.js";
 import { verifyCustomerSessionToken, type CustomerSessionClaim } from "../lib/customerSession.js";
+import { prisma } from "../lib/prisma.js";
 import { config } from "../config/index.js";
 import { logger } from "../lib/logger.js";
 
@@ -33,7 +34,7 @@ export function initSocket(server: HttpServer): SocketServer {
 
   // Every connection must authenticate as either staff or a customer session.
   // A client-provided room name is never trusted as proof of access (spec 13).
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const data = socket.data as SocketData;
     const token =
       socket.handshake.auth?.token ??
@@ -45,7 +46,19 @@ export function initSocket(server: HttpServer): SocketServer {
         const decoded = verifyToken(token) as AuthUser;
         // Only accept as staff when the payload actually carries a staff identity.
         if (decoded?.id && decoded?.role) {
-          data.user = decoded;
+          // Revalidate against the database, matching HTTP auth: deactivated
+          // accounts and role changes take effect without waiting for expiry.
+          const user = await prisma.user.findUnique({
+            where: { id: decoded.id },
+            select: { id: true, email: true, name: true, role: true, isActive: true },
+          });
+          if (!user || !user.isActive) return next(new Error("UNAUTHORIZED"));
+          data.user = {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role as AuthUser["role"],
+          };
           return next();
         }
       } catch {
@@ -148,5 +161,8 @@ export function emitAssistance(payload: unknown, sessionId?: string) {
 }
 
 export function emitMenuUpdated(payload: unknown) {
-  emitToStaff(SOCKET_EVENTS.MENU_UPDATED, payload, STAFF);
+  if (!io) return;
+  // Menu availability is public, so refresh every connected screen (staff and
+  // customers) in one broadcast; it keeps "86'd" items from lingering in carts.
+  io.emit(SOCKET_EVENTS.MENU_UPDATED, payload);
 }

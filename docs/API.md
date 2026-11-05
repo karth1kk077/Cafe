@@ -38,8 +38,11 @@ eligibility is re-checked server-side on every lookup and every order submission
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
 | GET | `/menu` | public | categories + items + variants + addons + settings |
-| GET | `/tables/:tableCode` | public | resolve QR token -> `{table, session, canOrder, sessionToken}`; rate-limited (`RATE_LIMIT_MAX`); payload carries no internal IDs (404 for unknown/inactive tokens) |
+| GET | `/tables/:tableCode` | public | resolve QR token -> `{table, session, canOrder, sessionToken}`; a `PENDING` session is returned with `canOrder:false` and no token; rate-limited (`RATE_LIMIT_MAX`); payload carries no internal IDs (404 for unknown/inactive tokens) |
+| POST | `/tables/:tableCode/start-session` | public | customer "start ordering"; creates (or returns) a `PENDING` session for a waiter to confirm; never mints a token while pending; audited `SESSION_REQUESTED` |
 | POST | `/orders` | `x-session-token` | create order; body `{idempotencyKey, items[]}` (no table/session/client prices); 409 `SESSION_CLOSED`; prices computed server-side |
+| GET | `/sessions/:sessionId/bill` | `x-session-token` | bill view: snapshot when generated, otherwise a preview from non-cancelled items; returns `{bill, paidMinor, dueMinor, isPreview, settings:{cafeName,currency,upiId}}` |
+| POST | `/order-items/:itemId/cancel` | `x-session-token` | customer cancels their own `QUEUED` item `{reason?}`; later states are rejected |
 | GET | `/orders/:orderId` | `x-session-token` | order + per-item status (404 if not in the token's session) |
 | GET | `/sessions/:sessionId/orders` | `x-session-token` | all orders for the authorized session |
 | POST | `/sessions/:sessionId/request-bill` | `x-session-token` | marks session `BILL_REQUESTED` |
@@ -55,7 +58,8 @@ Client-sent prices/totals are ignored.
 | POST | `/tables` | ADMIN | create table; trimmed number, seats optional; 422 validation, 409 `DUPLICATE` (case-insensitive); generates QR token, returns `{table, qrUrl}`, audited `TABLE_CREATED` |
 | PATCH | `/tables/:tableId` | ADMIN | update number/seats/isActive (same validation); `{rotateQr:true}` rotates the QR token; returns `qrUrl`; audited (`TABLE_UPDATED`/`TABLE_DEACTIVATED`/`TABLE_ACTIVATED`/`TABLE_QR_ROTATED`) |
 | GET | `/admin/tables` | ADMIN | table list with QR metadata: `qrToken`, `qrUrl`, `activeSession`, timestamps |
-| POST | `/tables/:tableId/sessions` | WAITER/ADMIN | open session (409 if one active) |
+| POST | `/tables/:tableId/sessions` | WAITER/ADMIN | open session directly (409 if one active) |
+| POST | `/sessions/:sessionId/confirm` | WAITER/ADMIN | confirm a customer-requested `PENDING` session -> `ACTIVE`; no-op if already active; audited `SESSION_CONFIRMED` |
 | GET | `/sessions/:sessionId` | WAITER/ADMIN | session detail |
 | POST | `/sessions/:sessionId/close` | WAITER/ADMIN | 409 `UNPAID_BALANCE` / `UNRESOLVED_ORDERS` |
 | POST | `/sessions/:sessionId/reopen` | ADMIN | audited reopen |
@@ -70,15 +74,19 @@ Client-sent prices/totals are ignored.
 | GET | `/assistance` | WAITER/ADMIN | open requests |
 | PATCH | `/assistance/:id` | WAITER/ADMIN | update status |
 | GET/POST | `/admin/users` | ADMIN | list / create staff |
+| PATCH | `/admin/users/:userId` | ADMIN | update name/role/`isActive`/password; cannot deactivate yourself; audited |
 | GET | `/admin/audit` | ADMIN | audit logs |
-| GET/PATCH | `/admin/settings` | ADMIN | café config |
+| GET/PATCH | `/admin/settings` | ADMIN | café config incl. `upiId` (used for the UPI deep link) |
+| GET | `/admin/menu` | ADMIN | categories + items including unavailable ("86'd") ones |
 | POST | `/admin/menu/categories` | ADMIN | create category |
+| PATCH | `/admin/menu/categories/:categoryId` | ADMIN | rename/sort/hide category |
 | POST | `/admin/menu/items` | ADMIN | create item |
-| PATCH | `/admin/menu/items/:itemId` | ADMIN | update/price/availability |
+| PATCH | `/admin/menu/items/:itemId` | ADMIN | update name/price/availability/category/tags |
 
 ## Item lifecycle (per line item)
 
-`QUEUED → PREPARING → READY → SERVED`, with `CANCELLED` allowed from `QUEUED` (KITCHEN/WAITER/ADMIN)
+`QUEUED → PREPARING → READY → SERVED`, with `CANCELLED` allowed from `QUEUED` (the owning
+customer, KITCHEN/WAITER/ADMIN)
 and `PREPARING` (WAITER/ADMIN), and from `READY` (ADMIN only). `SERVED`/`CANCELLED` are terminal.
 `PATCH /order-items/:itemId/status` rejects any other jump with `409 INVALID_TRANSITION`; a role
 that may not perform the step gets `403`. Each accepted change appends an immutable
@@ -108,7 +116,11 @@ Rooms are assigned **server-side**; clients cannot name their own room:
 Events emitted (notifications — always re-fetch state over REST):
 `order.created`, `order.updated`, `order_item.status_changed`, `order_item.ready`,
 `order_item.served`, `bill.requested`, `session.closed`, `session.reopened`,
-`assistance_request.created`.
+`assistance_request.created`, `menu.updated` (broadcast so "86'd" items disappear for
+customers and staff immediately).
+
+Staff sockets are revalidated against the database on connect, so deactivated accounts and role
+changes take effect immediately (matching HTTP auth).
 
 ## Concurrency & idempotency
 - `POST /orders` requires a client-generated `idempotencyKey`; retrying the same key on the same

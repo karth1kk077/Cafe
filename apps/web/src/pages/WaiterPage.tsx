@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, formatMoney, type OrderItemStatus } from "../lib/api";
 import { SOCKET_EVENTS, getSocket } from "../lib/socket";
@@ -17,7 +17,18 @@ interface Table {
       status: string;
       items: Array<{ id: string; nameSnapshot: string; quantity: number; status: OrderItemStatus }>;
     }>;
-    bills: Array<{ id: string; status: string; totalMinor: number }>;
+    bills: Array<{
+      id: string;
+      status: string;
+      totalMinor: number;
+      subtotalMinor: number;
+      taxMinor: number;
+      serviceChargeMinor: number;
+      discountMinor: number;
+      roundingMinor: number;
+      lineItems?: Array<{ id: string; nameSnapshot: string; quantity: number; unitPriceMinor: number; lineTotalMinor: number }>;
+      payments?: Array<{ id: string; amountMinor: number; method: string; status: string }>;
+    }>;
   }>;
 }
 
@@ -59,6 +70,7 @@ export function WaiterPage() {
   // Surfaced in the table sheet: without this, a rejected action (e.g. closing
   // with an unpaid bill) looked like the button simply did nothing.
   const [actionError, setActionError] = useState("");
+  const audioRef = useRef<AudioContext | null>(null);
 
   const { data, refetch } = useQuery<{ tables: Table[] }>({
     queryKey: ["tables"],
@@ -68,13 +80,36 @@ export function WaiterPage() {
   const { data: ready, refetch: refetchReady } = useQuery<{ items: ReadyItem[] }>({
     queryKey: ["ready-items"],
     queryFn: () => api.get("/staff/order-items/ready"),
-    refetchInterval: 20000,
+    refetchInterval: 60000,
   });
 
-  const { data: assistance } = useQuery<{ requests: Array<{ id: string; table: { number: string }; message?: string }> }>({
+  const { data: assistance } = useQuery<{ requests: Array<{ id: string; status: string; table: { number: string }; message?: string }> }>({
     queryKey: ["assistance"],
     queryFn: () => api.get("/staff/assistance"),
   });
+
+  const playAlert = useCallback(() => {
+    try {
+      if (typeof window === "undefined") return;
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = audioRef.current || new AudioCtx();
+      audioRef.current = ctx;
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.25);
+      if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+        (navigator as Navigator & { vibrate: (pattern: number | number[]) => boolean }).vibrate([200, 100, 200]);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     const socket = getSocket(localStorage.getItem("cafe_token") || undefined);
@@ -83,22 +118,36 @@ export function WaiterPage() {
       refetchReady();
       queryClient.invalidateQueries({ queryKey: ["assistance"] });
     };
+    const onItemReady = () => {
+      playAlert();
+      refresh();
+    };
+    const onAssistance = () => {
+      playAlert();
+      refresh();
+    };
     socket.on(SOCKET_EVENTS.ORDER_CREATED, refresh);
-    socket.on(SOCKET_EVENTS.ITEM_READY, refresh);
+    socket.on(SOCKET_EVENTS.ITEM_READY, onItemReady);
     socket.on(SOCKET_EVENTS.ITEM_STATUS, refresh);
     socket.on(SOCKET_EVENTS.BILL_REQUESTED, refresh);
-    socket.on(SOCKET_EVENTS.ASSISTANCE_REQUESTED, refresh);
+    socket.on(SOCKET_EVENTS.ASSISTANCE_REQUESTED, onAssistance);
     return () => {
       socket.off(SOCKET_EVENTS.ORDER_CREATED, refresh);
-      socket.off(SOCKET_EVENTS.ITEM_READY, refresh);
+      socket.off(SOCKET_EVENTS.ITEM_READY, onItemReady);
       socket.off(SOCKET_EVENTS.ITEM_STATUS, refresh);
       socket.off(SOCKET_EVENTS.BILL_REQUESTED, refresh);
-      socket.off(SOCKET_EVENTS.ASSISTANCE_REQUESTED, refresh);
+      socket.off(SOCKET_EVENTS.ASSISTANCE_REQUESTED, onAssistance);
     };
-  }, [refetch, refetchReady, queryClient]);
+  }, [playAlert, refetch, refetchReady, queryClient]);
 
   const openSession = useMutation({
     mutationFn: (tableId: string) => api.post(`/staff/tables/${tableId}/sessions`),
+    onSuccess: () => { setActionError(""); refetch(); },
+    onError: (e: Error) => setActionError(e.message),
+  });
+
+  const confirmSession = useMutation({
+    mutationFn: (sessionId: string) => api.post(`/staff/sessions/${sessionId}/confirm`),
     onSuccess: () => { setActionError(""); refetch(); },
     onError: (e: Error) => setActionError(e.message),
   });
@@ -116,9 +165,22 @@ export function WaiterPage() {
   });
 
   const recordPayment = useMutation({
-    mutationFn: ({ billId, amountMinor }: { billId: string; amountMinor: number }) =>
-      api.post("/staff/payments", { billId, amountMinor, method: "CASH" }),
+    mutationFn: ({
+      billId,
+      amountMinor,
+      method,
+    }: {
+      billId: string;
+      amountMinor: number;
+      method: "CASH" | "OTHER";
+    }) => api.post("/staff/payments", { billId, amountMinor, method }),
     onSuccess: () => { setActionError(""); refetch(); setPayAmount(""); },
+    onError: (e: Error) => setActionError(e.message),
+  });
+
+  const resolveAssistance = useMutation({
+    mutationFn: (id: string) => api.patch(`/staff/assistance/${id}`, { status: "RESOLVED" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["assistance"] }),
     onError: (e: Error) => setActionError(e.message),
   });
 
@@ -173,7 +235,19 @@ export function WaiterPage() {
             <div key={t.id} className="text-amber-800 text-sm font-semibold">🧾 Bill requested — Table {t.number}</div>
           ))}
           {active.map((r) => (
-            <div key={r.id} className="text-amber-800 text-sm">🙋 Assistance — Table {r.table.number}</div>
+            <div key={r.id} className="flex items-center justify-between gap-2 text-amber-800 text-sm">
+              <span>
+                🙋 Assistance — Table {r.table.number}
+                {r.message ? ` · ${r.message}` : ""}
+              </span>
+              <button
+                className="btn btn-ghost !py-1 !px-2 text-xs"
+                disabled={resolveAssistance.isPending}
+                onClick={() => resolveAssistance.mutate(r.id)}
+              >
+                Resolve
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -235,7 +309,13 @@ export function WaiterPage() {
               >
                 <div className="flex justify-between items-start">
                   <div className="text-lg font-bold">T{t.number}</div>
-                  <span className={`badge ${STATUS_COLOR[t.status] ?? "bg-slate-100"}`}>{t.status.replace("_", " ")}</span>
+                  <span
+                    className={`badge ${
+                      session?.status === "PENDING" ? "bg-amber-100 text-amber-800" : STATUS_COLOR[t.status] ?? "bg-slate-100"
+                    }`}
+                  >
+                    {session?.status === "PENDING" ? "REQUESTED" : t.status.replace("_", " ")}
+                  </span>
                 </div>
                 {session && (
                   <div className="mt-1 text-xs text-slate-600">
@@ -276,6 +356,16 @@ export function WaiterPage() {
             {selected.sessions[0] && (
               <div className="space-y-3">
                 <div className="text-sm font-semibold">Session {selected.sessions[0].id.slice(0, 8)}… ({selected.sessions[0].status})</div>
+
+                {selected.sessions[0].status === "PENDING" && (
+                  <button
+                    className="btn btn-accent w-full"
+                    disabled={confirmSession.isPending}
+                    onClick={() => confirmSession.mutate(selected.sessions[0].id)}
+                  >
+                    Confirm ordering for this table
+                  </button>
+                )}
 
                 {selected.sessions[0].orders.map((o) => (
                   <div key={o.id} className="card p-3">
@@ -320,38 +410,124 @@ export function WaiterPage() {
                     Close session
                   </button>
                 </div>
-                {selected.sessions[0].bills.filter((b) => b.status !== "PAID" && b.status !== "VOID").map((b) => (
-                  <div key={b.id} className="card p-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="font-semibold">Bill total</span>
-                      <span>{formatMoney(b.totalMinor)}</span>
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1">
-                      {b.status === "PARTIAL"
-                        ? "Partly paid · the exact amount due is on the printed bill."
-                        : "Unpaid · enter the amount collected below."}
-                    </div>
-                    <div className="flex gap-2 mt-2">
-                      <input
-                        className="input flex-1"
-                        inputMode="numeric"
-                        placeholder="Amount (paise)"
-                        value={payAmount}
-                        onChange={(e) => setPayAmount(e.target.value)}
-                      />
-                      <button
-                        className="btn btn-accent text-sm"
-                        onClick={() => recordPayment.mutate({ billId: b.id, amountMinor: Number(payAmount) })}
-                        disabled={!payAmount || recordPayment.isPending}
-                      >
-                        Record payment
-                      </button>
-                    </div>
-                    <div className="text-xs text-amber-700 mt-2">
-                      The session can only close once this bill is PAID.
-                    </div>
-                  </div>
-                ))}
+                {(selected.sessions[0].bills ?? [])
+                  .filter((b) => b.status !== "PAID" && b.status !== "VOID")
+                  .map((b) => {
+                    const paid = (b.payments ?? [])
+                      .filter((p) => p.status !== "FAILED" && p.status !== "REFUNDED")
+                      .reduce((sum, p) => sum + p.amountMinor, 0);
+                    const due = Math.max(0, b.totalMinor - paid);
+                    const amountMinor = Math.round((Number(payAmount) || 0) * 100);
+                    return (
+                      <div key={b.id} className="card p-3 space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="font-semibold">Bill</span>
+                          <span className={`badge ${b.status === "PARTIAL" ? "bg-amber-100 text-amber-800" : "bg-slate-100"}`}>
+                            {b.status}
+                          </span>
+                        </div>
+                        {b.lineItems && b.lineItems.length > 0 && (
+                          <div className="divide-y text-sm">
+                            {b.lineItems.map((l) => (
+                              <div key={l.id} className="flex justify-between py-1">
+                                <span>
+                                  {l.quantity}× {l.nameSnapshot}
+                                </span>
+                                <span>{formatMoney(l.lineTotalMinor)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="border-t pt-2 text-sm space-y-0.5">
+                          <div className="flex justify-between">
+                            <span>Subtotal</span>
+                            <span>{formatMoney(b.subtotalMinor)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Tax</span>
+                            <span>{formatMoney(b.taxMinor)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Service</span>
+                            <span>{formatMoney(b.serviceChargeMinor)}</span>
+                          </div>
+                          {b.roundingMinor !== 0 && (
+                            <div className="flex justify-between">
+                              <span>Rounding</span>
+                              <span>{formatMoney(b.roundingMinor)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between font-semibold border-t pt-1">
+                            <span>Total</span>
+                            <span>{formatMoney(b.totalMinor)}</span>
+                          </div>
+                          {paid > 0 && (
+                            <div className="flex justify-between text-emerald-700">
+                              <span>Paid</span>
+                              <span>{formatMoney(paid)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between font-bold">
+                            <span>Due</span>
+                            <span>{formatMoney(due)}</span>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            className="btn btn-ghost text-xs"
+                            onClick={() => setPayAmount(due > 0 ? (due / 100).toFixed(2) : "0.00")}
+                          >
+                            Exact amount
+                          </button>
+                          <button
+                            className="btn btn-ghost text-xs"
+                            onClick={() => {
+                              setPayAmount(due > 0 ? (due / 100).toFixed(2) : "0.00");
+                              if (due > 0) recordPayment.mutate({ billId: b.id, amountMinor: due, method: "CASH" });
+                            }}
+                            disabled={recordPayment.isPending || due === 0}
+                          >
+                            Cash
+                          </button>
+                          <button
+                            className="btn btn-ghost text-xs"
+                            onClick={() => {
+                              setPayAmount(due > 0 ? (due / 100).toFixed(2) : "0.00");
+                              if (due > 0) recordPayment.mutate({ billId: b.id, amountMinor: due, method: "OTHER" });
+                            }}
+                            disabled={recordPayment.isPending || due === 0}
+                          >
+                            UPI
+                          </button>
+                        </div>
+                        <div className="flex gap-2">
+                          <input
+                            className="input flex-1"
+                            inputMode="decimal"
+                            placeholder="Amount (₹)"
+                            value={payAmount}
+                            onChange={(e) => setPayAmount(e.target.value)}
+                          />
+                          <button
+                            className="btn btn-accent text-sm"
+                            onClick={() =>
+                              recordPayment.mutate({
+                                billId: b.id,
+                                amountMinor,
+                                method: "CASH",
+                              })
+                            }
+                            disabled={!amountMinor || amountMinor <= 0 || recordPayment.isPending}
+                          >
+                            Record
+                          </button>
+                        </div>
+                        <div className="text-xs text-amber-700">
+                          The session can only close once this bill is PAID.
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
             )}
           </div>

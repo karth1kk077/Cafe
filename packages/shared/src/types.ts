@@ -3,7 +3,7 @@ export type Role = "CUSTOMER" | "WAITER" | "KITCHEN" | "ADMIN";
 
 export type TableStatus = "AVAILABLE" | "OCCUPIED" | "BILL_REQUESTED" | "PAYMENT_PENDING" | "CLOSED";
 
-export type SessionStatus = "ACTIVE" | "BILL_REQUESTED" | "PAYMENT_PENDING" | "CLOSED";
+export type SessionStatus = "PENDING" | "ACTIVE" | "BILL_REQUESTED" | "PAYMENT_PENDING" | "CLOSED";
 
 // Line-item preparation state (spec 11.1).
 export type OrderItemStatus = "QUEUED" | "PREPARING" | "READY" | "SERVED" | "CANCELLED";

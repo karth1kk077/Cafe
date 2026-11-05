@@ -8,6 +8,10 @@
   authorization, role-gated transitions, concurrency, idempotency, and the critical stale-QR /
   post-closure attacks.
 - **Smoke** (PowerShell + live server): end-to-end verification against the running API.
+- **E2E** (Playwright): a 360x800 customer happy path (QR -> start ordering -> waiter confirms ->
+  add item -> place order -> tracking), including horizontal-overflow checks. The web server and
+  API are started automatically by `playwright.config.ts`; the test creates and removes its own
+  table, category and menu item.
 
 ## Test database
 Integration tests use a separate database so they never touch dev data. It is configured in
@@ -25,7 +29,17 @@ npm run test -w @cafe/api
 
 # Watch mode
 npm run test:watch -w @cafe/api
+
+# Lint + typecheck
+npm run lint
+npm run typecheck
+
+# Browser E2E (installs Chromium once with: npx playwright install chromium)
+npm run test:e2e
 ```
+
+Vitest is configured (root and API) to ignore `e2e/`; Playwright must be run via
+`npm run test:e2e`.
 
 ## Live smoke suite
 Start the API against the dev DB (seeded), then:
@@ -64,9 +78,15 @@ behaviors (session token, per-dish lifecycle, ready queue, billing, and post-clo
 23. Overpayment rejected (409).
 24. Reopen requires ADMIN (waiter 403) and writes an audit entry.
 25. QR token rotation invalidates the old token.
+26. Customer `start-session` creates a PENDING session (no token, `canOrder=false`); waiter
+    confirmation flips it to ACTIVE and the QR then mints an orderable token.
+27. Customer cancellation of a QUEUED item succeeds and the bill preview no longer includes it.
+28. A deactivated staff account's existing JWT is rejected immediately (HTTP; sockets revalidate too).
 
 ## Results (this environment)
-- Unit + integration: **46 passed / 0 failed** (27 integration, 12 order-state unit, 7 money unit).
+- Unit + integration: **53 passed / 0 failed** (34 integration, 12 order-state unit, 7 money unit).
+- Playwright E2E: **1 passed** at 360x800 (customer QR -> order -> tracking).
+- `npm run lint`: 0 errors; `npm run typecheck` and `npm run build`: clean.
 - The integration suite was run 17× consecutively with 0 failures to confirm it is not flaky.
 - Live smoke: the script is updated for the item-level contract; re-run it against a live server to
   refresh the pass count (the previous 17/17 result predated the item-level change).

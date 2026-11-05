@@ -6,6 +6,7 @@ Production-minded monorepo: customer QR ordering, chef phone interface, waiter d
 See docs/SETUP.md. Requires Node 20+ and PostgreSQL (or Docker). 
 
 ## Docs
+- **APPLICATION-CONTEXT.md** — complete briefing: what the app is, how complete it is, known gaps
 - ARCHITECTURE.md, DB-DESIGN.md, API.md, SETUP.md, SECURITY.md, TESTING.md, ACCEPTANCE-TESTS.md, DEPLOYMENT.md, PROGRESS.md
 
 ## Core principle

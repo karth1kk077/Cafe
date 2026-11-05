@@ -7,25 +7,37 @@
     "apps/*",
     "packages/*"
   ],
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=10.0.0"
+  },
   "scripts": {
-    "dev": "echo \"Use: npm run dev:api && npm run dev:web (separately)\" && exit 0",
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "npm run dev -w @cafe/api",
     "dev:web": "npm run dev -w @cafe/web",
     "build": "npm run build -w @cafe/api && npm run build -w @cafe/web && npm run build -w @cafe/shared",
-    "lint": "echo \"lint placeholder\"",
+    "lint": "eslint .",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:seed": "tsx prisma/seed.ts",
     "db:reset": "prisma migrate reset --force --schema prisma/schema.prisma"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/node": "^24.7.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
     "prisma": "^6.16.3",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.0",
     "vitest": "^3.2.4"
   },
   "dependencies": {

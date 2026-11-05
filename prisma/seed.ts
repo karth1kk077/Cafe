@@ -98,7 +98,7 @@ async function main() {
   });
 
   // Coffee items
-  const espresso = await prisma.menuItem.upsert({
+  await prisma.menuItem.upsert({
     where: { id: "10000000-0000-4000-8000-000000000001" },
     update: {},
     create: {
@@ -140,7 +140,7 @@ async function main() {
   });
 
   // Food items
-  const grilledSandwich = await prisma.menuItem.upsert({
+  await prisma.menuItem.upsert({
     where: { id: "10000000-0000-4000-8000-000000000003" },
     update: {},
     create: {

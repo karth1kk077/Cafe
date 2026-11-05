@@ -305,7 +305,6 @@ describe("item-level preparation lifecycle", () => {
       { menuItemId: latteId, quantity: 1 },
       { menuItemId: latteId, quantity: 1 },
     ]);
-    const orderId = o.body.order.id;
     const items = o.body.order.items as Array<{ id: string; status: string }>;
     expect(items).toHaveLength(2);
     expect(o.body.order.status).toBe("RECEIVED");
@@ -707,5 +706,68 @@ describe("admin tables & QR codes", () => {
     });
     expect(audit).toBeTruthy();
     await prisma.cafeTable.delete({ where: { id: created.body.table.id } });
+  });
+});
+
+describe("frictionless UX", () => {
+  it("start-session creates PENDING, waiter confirms, then ordering works", async () => {
+    await resetTable();
+    const res = await request(app)
+      .post(`/api/public/tables/${tableToken}/start-session`)
+      .send({});
+    expect(res.status).toBe(201);
+    expect(res.body.session.status).toBe("PENDING");
+    expect(res.body.canOrder).toBe(false);
+    expect(res.body.sessionToken).toBeNull();
+    const sessionId = res.body.session.id as string;
+
+    const c = await request(app)
+      .post(`/api/staff/sessions/${sessionId}/confirm`)
+      .set("Authorization", `Bearer ${waiterToken}`)
+      .send({});
+    expect(c.status).toBe(200);
+    expect(c.body.session.status).toBe("ACTIVE");
+
+    const tok = await sessionToken();
+    expect(tok).toBeTruthy();
+    const order = await placeOrder(tok as string, [{ menuItemId: latteId, quantity: 1 }]);
+    expect(order.status).toBe(201);
+    await closeSessionClean(sessionId);
+  });
+
+  it("customer can cancel a queued item and the bill preview excludes it", async () => {
+    const { sessionId, token } = await openOrderable();
+    const o = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    expect(o.status).toBe(201);
+    const itemId = o.body.order.items[0].id as string;
+
+    const bill1 = await request(app)
+      .get(`/api/public/sessions/${sessionId}/bill`)
+      .set("x-session-token", token);
+    expect(bill1.status).toBe(200);
+    expect(bill1.body.isPreview).toBe(true);
+    expect(bill1.body.bill.lineItems.length).toBe(1);
+
+    const cancel = await request(app)
+      .post(`/api/public/order-items/${itemId}/cancel`)
+      .set("x-session-token", token)
+      .send({});
+    expect(cancel.status).toBe(200);
+
+    const bill2 = await request(app)
+      .get(`/api/public/sessions/${sessionId}/bill`)
+      .set("x-session-token", token);
+    expect(bill2.body.bill.lineItems.length).toBe(0);
+    await closeSessionClean(sessionId);
+  });
+
+  it("rejects a deactivated staff token immediately", async () => {
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: "w@test.local" } });
+    await prisma.user.update({ where: { id: user.id }, data: { isActive: false } });
+    const res = await request(app)
+      .get("/api/staff/tables")
+      .set("Authorization", `Bearer ${waiterToken}`);
+    expect(res.status).toBe(401);
+    await prisma.user.update({ where: { id: user.id }, data: { isActive: true } });
   });
 });

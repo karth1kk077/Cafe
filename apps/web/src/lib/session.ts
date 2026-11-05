@@ -11,6 +11,40 @@ export interface StoredSession {
 }
 
 const KEY = (tableCode: string) => `cafe_session:${tableCode}`;
+const CART_KEY = (tableCode: string) => `cafe_cart:${tableCode}`;
+
+export interface StoredCartLine {
+  key: string;
+  menuItemId: string;
+  name: string;
+  variantId?: string;
+  variantName?: string;
+  addonIds: string[];
+  addonNames: string[];
+  unitPriceMinor: number;
+  quantity: number;
+  specialInstructions?: string;
+}
+
+export function saveCart(tableCode: string, cart: StoredCartLine[]): void {
+  try {
+    if (cart.length) localStorage.setItem(CART_KEY(tableCode), JSON.stringify(cart));
+    else localStorage.removeItem(CART_KEY(tableCode));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export function loadCart(tableCode: string): StoredCartLine[] {
+  try {
+    const raw = localStorage.getItem(CART_KEY(tableCode));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as StoredCartLine[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 export function saveSession(tableCode: string, session: StoredSession | null): void {
   try {

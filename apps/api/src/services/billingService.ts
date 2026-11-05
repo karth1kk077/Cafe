@@ -97,6 +97,93 @@ export async function generateBill(sessionId: string, actor: { id: string }) {
   });
 }
 
+/**
+ * Customer-facing bill view. Once the waiter has generated a bill this returns
+ * the immutable snapshot; before that it returns a provisional itemised preview
+ * computed from the session's non-cancelled items so the customer always knows
+ * the amount due.
+ */
+export async function getSessionBillView(sessionId: string) {
+  const [session, settings] = await Promise.all([
+    prisma.diningSession.findUnique({
+      where: { id: sessionId },
+      include: {
+        orders: { include: { items: true } },
+        bills: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          include: { lineItems: true, payments: true },
+        },
+      },
+    }),
+    getSettings(),
+  ]);
+  if (!session) throw new NotFoundError("Session not found");
+
+  const bill = session.bills[0] ?? null;
+  if (bill) {
+    const paidMinor = bill.payments
+      .filter((p) => p.status === "COMPLETED")
+      .reduce((sum, p) => sum + p.amountMinor, 0);
+    return {
+      bill,
+      paidMinor,
+      dueMinor: Math.max(0, bill.totalMinor - paidMinor),
+      isPreview: false,
+      settings: { cafeName: settings.cafeName, currency: settings.currency, upiId: settings.upiId },
+    };
+  }
+
+  let subtotal = 0;
+  const lineItems: Array<{
+    id: string;
+    nameSnapshot: string;
+    quantity: number;
+    unitPriceMinor: number;
+    lineTotalMinor: number;
+  }> = [];
+  for (const order of session.orders) {
+    for (const item of order.items) {
+      if (item.status === "CANCELLED") continue;
+      subtotal += item.lineTotalMinor;
+      lineItems.push({
+        id: item.id,
+        nameSnapshot: item.nameSnapshot,
+        quantity: item.quantity,
+        unitPriceMinor: item.unitPriceMinor,
+        lineTotalMinor: item.lineTotalMinor,
+      });
+    }
+  }
+  const taxMinor = Math.round((subtotal * settings.taxRateBps) / 10000);
+  const serviceChargeMinor = Math.round((subtotal * settings.serviceChargeBps) / 10000);
+  const preRounding = subtotal + taxMinor + serviceChargeMinor;
+  const roundingMinor = settings.roundingEnabled ? Math.round(preRounding / 100) * 100 - preRounding : 0;
+  const totalMinor = preRounding + roundingMinor;
+
+  return {
+    bill: {
+      id: null,
+      billNumber: null,
+      status: "PREVIEW",
+      subtotalMinor: subtotal,
+      taxMinor,
+      serviceChargeMinor,
+      discountMinor: 0,
+      roundingMinor,
+      totalMinor,
+      currency: settings.currency,
+      createdAt: new Date(),
+      lineItems,
+      payments: [],
+    },
+    paidMinor: 0,
+    dueMinor: totalMinor,
+    isPreview: true,
+    settings: { cafeName: settings.cafeName, currency: settings.currency, upiId: settings.upiId },
+  };
+}
+
 export async function recordPayment(
   input: { billId: string; amountMinor: number; method: "CASH" | "OTHER"; reference?: string },
   actor: { id: string }

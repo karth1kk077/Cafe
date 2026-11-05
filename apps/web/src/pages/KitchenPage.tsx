@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, formatMoney, type OrderItemStatus, type OrderStatus } from "../lib/api";
 import { SOCKET_EVENTS, getSocket } from "../lib/socket";
@@ -48,36 +48,66 @@ export function KitchenPage() {
   const { user, logout } = useAuth();
   const [filter, setFilter] = useState<FilterKey>("queued");
   const [soundOn, setSoundOn] = useState(true);
-  const soundRef = useRef(soundOn);
-  soundRef.current = soundOn;
+  const [soundReady, setSoundReady] = useState(false);
+  const audioRef = useRef<AudioContext | null>(null);
+
+  // Browsers keep WebAudio suspended until a user gesture. Surface a clear
+  // "Enable sound" tap so a reload does not silently mute new-order alerts.
+  async function enableSound() {
+    try {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = audioRef.current || new AudioCtx();
+      audioRef.current = ctx;
+      if (ctx.state === "suspended") await ctx.resume();
+      setSoundReady(ctx.state === "running");
+      setSoundOn(true);
+    } catch {
+      /* audio unavailable */
+    }
+  }
+
+  // Keep the kitchen phone awake while the screen is in use.
+  useEffect(() => {
+    let wakeLock: WakeLockSentinel | null = null;
+    let cancelled = false;
+    async function acquire() {
+      try {
+        if (!("wakeLock" in navigator) || cancelled) return;
+        wakeLock = await navigator.wakeLock.request("screen");
+      } catch {
+        /* unsupported or denied */
+      }
+    }
+    void acquire();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void acquire();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      void wakeLock?.release().catch(() => {});
+    };
+  }, []);
 
   const { data, refetch } = useQuery<{ orders: KitchenOrder[] }>({
     queryKey: ["kitchen-orders"],
     queryFn: () => api.get("/staff/orders"),
-    refetchInterval: 15000,
+    refetchInterval: 60000,
   });
 
-  useEffect(() => {
-    const socket = getSocket(localStorage.getItem("cafe_token") || undefined);
-    socket.emit("subscribe:kitchen");
-    const onCreated = () => {
-      refetch();
-      if (soundRef.current) playBeep();
-    };
-    const onChanged = () => refetch();
-    socket.on(SOCKET_EVENTS.ORDER_CREATED, onCreated);
-    socket.on(SOCKET_EVENTS.ITEM_STATUS, onChanged);
-    socket.on(SOCKET_EVENTS.ORDER_UPDATED, onChanged);
-    return () => {
-      socket.off(SOCKET_EVENTS.ORDER_CREATED, onCreated);
-      socket.off(SOCKET_EVENTS.ITEM_STATUS, onChanged);
-      socket.off(SOCKET_EVENTS.ORDER_UPDATED, onChanged);
-    };
-  }, [refetch]);
-
-  function playBeep() {
+  const playBeep = useCallback(() => {
     try {
-      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      const AudioCtx =
+        window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = audioRef.current || new AudioCtx();
+      audioRef.current = ctx;
+      if (ctx.state === "suspended") {
+        void ctx.resume();
+        return;
+      }
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
@@ -89,12 +119,41 @@ export function KitchenPage() {
     } catch {
       /* audio blocked */
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    const socket = getSocket(localStorage.getItem("cafe_token") || undefined);
+    socket.emit("subscribe:kitchen");
+    const onCreated = () => {
+      refetch();
+      if (soundOn) playBeep();
+    };
+    const onChanged = () => refetch();
+    socket.on(SOCKET_EVENTS.ORDER_CREATED, onCreated);
+    socket.on(SOCKET_EVENTS.ITEM_STATUS, onChanged);
+    socket.on(SOCKET_EVENTS.ORDER_UPDATED, onChanged);
+    return () => {
+      socket.off(SOCKET_EVENTS.ORDER_CREATED, onCreated);
+      socket.off(SOCKET_EVENTS.ITEM_STATUS, onChanged);
+      socket.off(SOCKET_EVENTS.ORDER_UPDATED, onChanged);
+    };
+  }, [playBeep, refetch, soundOn]);
 
   // Chef-driven transitions only: QUEUED -> PREPARING -> READY.
   const setItemStatus = useMutation({
     mutationFn: ({ itemId, status }: { itemId: string; status: OrderItemStatus }) =>
       api.patch(`/staff/order-items/${itemId}/status`, { status }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["kitchen-orders"] }),
+  });
+
+  const bulkReady = useMutation({
+    mutationFn: async (items: KitchenOrder["items"]) => {
+      for (const it of items) {
+        if (it.status === "PREPARING") {
+          await api.patch(`/staff/order-items/${it.id}/status`, { status: "READY" });
+        }
+      }
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["kitchen-orders"] }),
   });
 
@@ -115,12 +174,18 @@ export function KitchenPage() {
               <div className="text-xs opacity-70">{user?.name}</div>
             </div>
             <div className="flex gap-2">
-              <button
-                className={`chip ${soundOn ? "!bg-green-600 text-white" : "bg-slate-700 text-slate-300"}`}
-                onClick={() => setSoundOn((s) => !s)}
-              >
-                🔔 {soundOn ? "On" : "Off"}
-              </button>
+              {!soundReady ? (
+                <button className="btn btn-accent !bg-amber-500 text-xs" onClick={enableSound}>
+                  Enable sound
+                </button>
+              ) : (
+                <button
+                  className={`chip ${soundOn ? "!bg-green-600 text-white" : "bg-slate-700 text-slate-300"}`}
+                  onClick={() => setSoundOn((s) => !s)}
+                >
+                  🔔 {soundOn ? "On" : "Off"}
+                </button>
+              )}
               <button className="btn btn-ghost !text-white !border-white/30 text-sm" onClick={() => { logout(); location.href = "/login"; }}>
                 Exit
               </button>
@@ -158,6 +223,15 @@ export function KitchenPage() {
                   <div className="text-xs text-slate-500 mt-1">{o.status}</div>
                 </div>
               </div>
+              {o.items.some((it) => it.status === "PREPARING") && (
+                <button
+                  className="btn btn-ghost text-xs mt-1"
+                  disabled={bulkReady.isPending}
+                  onClick={() => bulkReady.mutate(o.items)}
+                >
+                  Mark all items for this order ready
+                </button>
+              )}
               <ul className="mt-2 space-y-2">
                 {o.items.map((it) => (
                   <li key={it.id} className="border-t pt-2 first:border-t-0 first:pt-0">

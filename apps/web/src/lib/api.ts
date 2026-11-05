@@ -56,6 +56,7 @@ export interface PublicMenuResponse {
       description?: string;
       priceMinor: number;
       imageUrl?: string;
+      isAvailable?: boolean;
       dietaryTags: string[];
       allergens: string[];
       variants: Array<{ id: string; name: string; priceDeltaMinor: number }>;
@@ -72,6 +73,34 @@ export interface TableResponse {
   canOrder: boolean;
   /** Present only when the table has an orderable session. */
   sessionToken: string | null;
+}
+
+export interface CustomerBillResponse {
+  bill: {
+    id: string | null;
+    billNumber: string | null;
+    status: string;
+    subtotalMinor: number;
+    taxMinor: number;
+    serviceChargeMinor: number;
+    discountMinor: number;
+    roundingMinor: number;
+    totalMinor: number;
+    currency: string;
+    createdAt: string;
+    lineItems: Array<{
+      id: string;
+      nameSnapshot: string;
+      quantity: number;
+      unitPriceMinor: number;
+      lineTotalMinor: number;
+    }>;
+    payments: Array<{ id: string; amountMinor: number; method: string; status: string; createdAt: string }>;
+  };
+  paidMinor: number;
+  dueMinor: number;
+  isPreview: boolean;
+  settings: { cafeName: string; currency: string; upiId: string | null };
 }
 
 export interface OrderItemResponse {

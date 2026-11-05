@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const RoleSchema = z.enum(["CUSTOMER", "WAITER", "KITCHEN", "ADMIN"]);
-export const SessionStatusSchema = z.enum(["ACTIVE", "BILL_REQUESTED", "PAYMENT_PENDING", "CLOSED"]);
+export const SessionStatusSchema = z.enum(["PENDING", "ACTIVE", "BILL_REQUESTED", "PAYMENT_PENDING", "CLOSED"]);
 export const OrderStatusSchema = z.enum([
   "RECEIVED",
   "IN_PROGRESS",

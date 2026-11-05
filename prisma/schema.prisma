@@ -23,6 +23,9 @@ enum TableStatus {
 }
 
 enum SessionStatus {
+  // PENDING = requested from the table QR, browsable but not orderable until
+  // a waiter confirms it. Keeps ordering staff-gated without a round-trip.
+  PENDING
   ACTIVE
   BILL_REQUESTED
   PAYMENT_PENDING
@@ -113,8 +116,10 @@ model DiningSession {
   tableId    String        @db.Uuid
   table      CafeTable     @relation(fields: [tableId], references: [id], onDelete: Restrict)
   status     SessionStatus @default(ACTIVE)
-  openedBy   String        @db.Uuid
-  openedById User          @relation("SessionOpenedBy", fields: [openedBy], references: [id])
+  // Null only while a customer-requested session is PENDING; it is stamped
+  // with the confirming waiter's id when the session becomes ACTIVE.
+  openedBy   String?       @db.Uuid
+  openedById User?         @relation("SessionOpenedBy", fields: [openedBy], references: [id])
   closedBy   String?       @db.Uuid
   closedById User?         @relation("SessionClosedBy", fields: [closedBy], references: [id])
   openedAt   DateTime      @default(now())
@@ -403,5 +408,7 @@ model Settings {
   taxRateBps       Int      @default(500) // basis points, 500 = 5%
   serviceChargeBps Int      @default(0)
   roundingEnabled  Boolean  @default(true)
+  // Optional UPI VPA (e.g. cafe@upi) used to build a customer payment deep link.
+  upiId            String?
   updatedAt        DateTime @updatedAt
 }

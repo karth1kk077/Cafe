@@ -1,6 +1,6 @@
 # Progress Ledger
 
-## Current phase: Phase 10 — Mobile responsive & touch pass (built; visual phone pass pending)
+## Current phase: Phase 11 — Frictionless ordering & PWA (built and verified)
 
 ## Completed
 - **Phase 0** — Requirements/architecture, business rules, DB design, risks, defaults (INR, single café).
@@ -29,6 +29,30 @@
   payload. New admin tab "Tables & QR" (`TablesQrPanel`) with list/search/filter, add/edit forms,
   confirmations, QR preview, PNG + SVG download, copy link, and a print-only sheet (client-side
   rendering via the `qrcode` library; no image files stored).
+- **Phase 11** — **Frictionless ordering & PWA**:
+  - **Customer-started sessions**: `POST /public/tables/:tableCode/start-session` creates a
+    `PENDING` session (visible to the customer as "waiting for a waiter"; no session token is
+    minted, so ordering rules are unchanged). Waiters confirm with one tap
+    (`POST /staff/sessions/:sessionId/confirm` -> `ACTIVE`); the customer screen polls every 5 s
+    while pending, so no manual refresh is needed.
+  - **Customer self-service**: cancel a still-`QUEUED` dish (`POST /public/order-items/:itemId/cancel`)
+    and view a live bill preview or generated snapshot (`GET /public/sessions/:sessionId/bill`).
+    `Settings.upiId` powers a "Pay with UPI" deep link (`upi://pay?...`) on the tracking screen.
+  - **Waiter UX**: rupee payment entry with exact/cash/UPI quick actions, full bill breakdown
+    (lines, tax, service, rounding, paid, due), assistance-request resolution, audible/vibration
+    alerts for ready dishes and help requests, and a 60 s fallback poll.
+  - **Kitchen UX**: explicit "Enable sound" gesture (browsers block autoplay), Screen Wake Lock,
+    and one-tap "mark this order's preparing items ready".
+  - **Admin**: staff activate/deactivate, category create/hide, item create/price/86, and settings
+    for currency, tax, service charge, rounding and UPI ID. Menu changes broadcast `menu.updated`
+    to every connected screen.
+  - **Hardening**: HTTP **and socket** auth now re-check `isActive`/role in the database on every
+    request/connection; customer order submits silently re-resolve the QR once on a 401 and retry
+    with the same idempotency key.
+  - **PWA / performance**: `vite-plugin-pwa` (manifest, generated service worker, 192/512 icons),
+    route-level `React.lazy` splitting, reconnect refetch + offline banner, and 60 s polling as a
+    socket fallback. Fixed a menu bug where a plain "Add" (no variants/addons) opened the
+    customizer instead of adding to the cart.
 - **Phase 10** — **Mobile responsive & touch pass** across every surface (login, customer menu,
   order tracking, kitchen, waiter, admin). Layout/interaction only, no behavior changes:
   viewport meta no longer blocks pinch zoom (`maximum-scale`/`user-scalable` removed); header +
@@ -65,10 +89,16 @@
   `cafe_test_db`; `prisma migrate diff` reports no drift.
 - **Phase 9 required no migration** — `CafeTable` already carries unique `number`/`qrToken`,
   `isActive`, and timestamps. `prisma migrate status` reports "Database schema is up to date!".
+- `20261023120000_frictionless_ux` — adds `SessionStatus.PENDING`, makes
+  `DiningSession.openedBy` nullable (customer-requested sessions have no staff actor yet) and adds
+  `Settings.upiId`. Applied to `cafe_db` and `cafe_test_db`; `prisma generate` rerun.
 
 ## Tests executed & results (this environment)
-- **Unit + integration (Vitest + Supertest): 50 passed / 0 failed**
-  (31 integration, 12 order-state unit, 7 money unit). Command: `npm run test -w @cafe/api`.
+- **Unit + integration (Vitest + Supertest): 53 passed / 0 failed**
+  (34 integration, 12 order-state unit, 7 money unit). Command: `npm test`. The three new
+  integration tests cover the PENDING -> waiter-confirm -> ordering handshake, customer item
+  cancellation removing the line from the bill preview, and immediate rejection of a deactivated
+  staff token.
   The integration suite covers the item-level lifecycle, derived summary, per-item RBAC and
   invalid-transition rejection, the ready-dish queue, `OrderItemEvent` audit, cancelled-item
   billing, and the critical session-token cases (no token → 401; stale token after close → 409;
@@ -87,6 +117,16 @@
   overpayment rejection, **post-closure rejection**, saved-QR `canOrder=false`, RBAC 401/403).
   *Note:* the smoke script was written for the pre-item-level contract; it has not been re-run
   against the item-level API (kept as historical evidence, not re-claimed).
+- **Phase 11 verification (this environment):**
+  - `npm run typecheck` (`tsc -b`) — clean.
+  - `npm test` — **53 passed** (Vitest excludes the Playwright `e2e/` directory).
+  - `npm run lint` — **0 errors** (ESLint 9 flat config; a few advisory warnings remain).
+  - `npm run build` — API + shared `tsc` and web `vite build` clean; PWA precaches 18 assets.
+  - `npm run test:e2e` — **1 passed**: 360x800 Playwright happy path (QR -> Start ordering ->
+    waiter confirms -> add item -> place order -> tracking), including no-horizontal-scroll checks.
+  - `npx prisma migrate status` — up to date on both databases.
+- **CI:** `.github/workflows/ci.yml` runs Postgres 16, migrate, seed, typecheck, lint, unit +
+  integration tests, build, and the Playwright happy path (artifacts uploaded on failure).
 - **Builds:** `tsc -b` (project references across shared/api/web) and `vite build` are **clean**.
   (A prior ledger line claiming clean builds/tests was corrected here: the earlier 25-test count
   predated this change.)
@@ -109,7 +149,8 @@
 - No real payment gateway (cash/staff-recorded only) — by design for v1.
 - No CSRF token (auth uses SameSite cookie + Bearer); revisit if `SameSite=none` is enabled.
 - Socket horizontal scaling needs the Redis adapter (documented, not wired).
-- Playwright E2E not set up (integration + smoke cover the critical flows).
+- Playwright E2E exists for the customer happy path only (360 px QR -> order -> tracking); the
+  kitchen, waiter and admin UIs are still covered by integration tests and manual passes.
 - Phase 9: scanning the rendered/downloaded/printed QR with a real phone camera is a manual check
   (no browser automation here); QR images are generated client-side, so the UI itself needs a
   browser pass — checklist in `docs/ACCEPTANCE-TESTS.md` under "Admin → Tables & QR Codes".
@@ -138,18 +179,14 @@ link) built and typechecked** ✓, **unique QR URL per table from configured bas
 **case-insensitive duplicate labels rejected (409)** ✓, **inactive/unknown QR tokens → 404** ✓,
 **order submission revalidates session on the server (pre-existing, still green)** ✓,
 public payload carries no internal IDs ✓.
-Docker deployment and Playwright E2E remain **unverified** (disclosed above), not claimed complete.
+Docker deployment remains **unverified** (no Docker on this host), not claimed complete.
 The PowerShell smoke suite has not been re-run against the item-level API (see Tests above).
 **Still manual:** scan a downloaded/printed QR with a real phone camera and walk the admin UI in a
-browser (`docs/ACCEPTANCE-TESTS.md` → "Admin → Tables & QR Codes"), because this environment has no
-browser automation.
+browser (`docs/ACCEPTANCE-TESTS.md` → "Admin → Tables & QR Codes"), plus the kitchen/waiting
+surfaces on a real iOS device (sound unlock, Wake Lock and safe-area behavior).
 
 ## Next exact step
-Run the new "Admin → Tables & QR Codes" checklist in `docs/ACCEPTANCE-TESTS.md` in a browser
-(`npm run dev:api` + `npm run dev:web`, log in as admin@cafe.local), including a real phone-camera
-scan of a downloaded PNG and a printed sheet. While in the browser, do the Phase 10 mobile check:
-resize to ~360 px (or a real phone) and confirm each surface — no horizontal scroll, category/tab
-bars stick below the header, chips and steppers are comfortable to tap, no iOS focus zoom on
-inputs, and bottom bars clear the home indicator. After that: re-point `docs/smoke.ps1` at the
-item-level endpoints, verify `docker compose up --build` on a Docker-enabled host, and add Playwright
-E2E for the four role interfaces if browser-level coverage is required.
+Add Playwright coverage for the staff surfaces (kitchen mark-ready, waiter confirm/payment, admin
+86/settings), then run `docker compose up --build` on a Docker-enabled host. On a real iOS device,
+verify the sound-unlock, Wake Lock and safe-area behavior, and scan a printed QR with the camera.
+Re-point `docs/smoke.ps1` at the item-level endpoints when convenient.

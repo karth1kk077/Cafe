@@ -22,12 +22,13 @@ const Ctx = createContext<AuthCtx | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("cafe_token"));
-  const [loading, setLoading] = useState(true);
+  // Only wait on /auth/me when a token was actually stored; otherwise the app
+  // can render the login route immediately instead of flashing a loader.
+  const [loading, setLoading] = useState(() => Boolean(localStorage.getItem("cafe_token")));
 
   useEffect(() => {
     const stored = localStorage.getItem("cafe_token");
     if (stored) {
-      setToken(stored);
       api
         .get<{ user: User }>("/auth/me")
         .then((r) => setUser(r.user))
@@ -36,8 +37,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setToken(null);
         })
         .finally(() => setLoading(false));
-    } else {
-      setLoading(false);
     }
   }, []);
 

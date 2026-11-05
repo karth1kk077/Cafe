@@ -6,11 +6,19 @@ import { config } from "../config/index.js";
 import { UnauthorizedError, NotFoundError } from "../lib/errors.js";
 import { getPublicMenu, resolveTableByCode, getSettings } from "../services/menuService.js";
 import { createOrder, getOrder } from "../services/orderService.js";
-import { requestBill } from "../services/sessionService.js";
+import { requestBill, requestSession } from "../services/sessionService.js";
+import { cancelCustomerOrderItem } from "../services/orderItemService.js";
+import { getSessionBillView } from "../services/billingService.js";
 import { signCustomerSessionToken } from "../lib/customerSession.js";
 import { requireCustomerSession } from "../middleware/auth.js";
 import { prisma } from "../lib/prisma.js";
-import { emitOrderCreated, emitBillRequested, emitAssistance } from "../socket/index.js";
+import {
+  emitOrderCreated,
+  emitBillRequested,
+  emitAssistance,
+  emitItemStatus,
+  emitOrderUpdated,
+} from "../socket/index.js";
 
 export const publicRouter = Router();
 
@@ -55,6 +63,29 @@ publicRouter.get(
         : null,
       canOrder,
       sessionToken: canOrder && activeSession ? signCustomerSessionToken(activeSession.id, table.id) : null,
+    });
+  })
+);
+
+// Customer-initiated "start ordering". Creates a PENDING session that a waiter
+// confirms with one tap; no session token is minted until it is ACTIVE, so the
+// server's ordering rules are unchanged.
+publicRouter.post(
+  "/tables/:tableCode/start-session",
+  tableLookupLimiter,
+  asyncHandler(async (req, res) => {
+    const { table } = await resolveTableByCode(String(req.params.tableCode));
+    await requestSession(table.id);
+    const { table: freshTable, activeSession } = await resolveTableByCode(String(req.params.tableCode));
+    const canOrder = activeSession?.status === "ACTIVE";
+    res.status(201).json({
+      table: { number: freshTable.number, status: freshTable.status },
+      session: activeSession
+        ? { id: activeSession.id, status: activeSession.status, openedAt: activeSession.openedAt }
+        : null,
+      canOrder,
+      sessionToken:
+        canOrder && activeSession ? signCustomerSessionToken(activeSession.id, freshTable.id) : null,
     });
   })
 );
@@ -122,6 +153,49 @@ publicRouter.get(
     });
     if (!session) throw new NotFoundError("Session not found");
     res.json({ session: { id: session.id, status: session.status }, orders: session.orders });
+  })
+);
+
+// Itemised bill for the customer's own session. Returns a provisional preview
+// until the waiter generates the immutable snapshot.
+publicRouter.get(
+  "/sessions/:sessionId/bill",
+  requireCustomerSession(),
+  asyncHandler(async (req, res) => {
+    res.json(await getSessionBillView(req.customerSession!.sessionId));
+  })
+);
+
+// A customer may withdraw a dish while it is still QUEUED.
+publicRouter.post(
+  "/order-items/:itemId/cancel",
+  requireCustomerSession(),
+  asyncHandler(async (req, res) => {
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 200) : undefined;
+    const result = await cancelCustomerOrderItem(
+      String(req.params.itemId),
+      req.customerSession!.sessionId,
+      reason
+    );
+    const sessionId = result.order.sessionId;
+    emitItemStatus(
+      {
+        orderId: result.order.id,
+        orderStatus: result.order.status,
+        sessionId,
+        item: result.item,
+        fromStatus: result.previousStatus,
+        toStatus: result.item.status,
+      },
+      sessionId
+    );
+    if (result.orderStatusChanged) {
+      emitOrderUpdated(
+        { id: result.order.id, sessionId, status: result.order.status, updatedAt: new Date() },
+        sessionId
+      );
+    }
+    res.json({ item: result.item, order: result.order });
   })
 );
 

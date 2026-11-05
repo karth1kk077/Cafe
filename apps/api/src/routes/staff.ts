@@ -15,6 +15,7 @@ import { ConflictError, NotFoundError } from "../lib/errors.js";
 import { buildTableQrUrl } from "../lib/qr.js";
 import {
   openSession,
+  confirmSession,
   closeSession,
   reopenSession,
   getSessionDetail,
@@ -26,7 +27,7 @@ import {
   transitionOrderItem,
 } from "../services/orderItemService.js";
 import { generateBill, recordPayment } from "../services/billingService.js";
-import { getSettings, updateSettings } from "../services/menuService.js";
+import { getAdminMenu, getSettings, updateSettings } from "../services/menuService.js";
 import { hashPassword } from "../services/authService.js";
 import { RoleSchema } from "@cafe/shared";
 import {
@@ -34,6 +35,7 @@ import {
   emitOrderUpdated,
   emitSessionClosed,
   emitSessionReopened,
+  emitMenuUpdated,
 } from "../socket/index.js";
 import { z } from "zod";
 
@@ -79,7 +81,7 @@ staffRouter.get(
               where: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
               include: { items: true },
             },
-            bills: true,
+            bills: { include: { lineItems: true, payments: true } },
           },
         },
       },
@@ -177,6 +179,16 @@ staffRouter.post(
   asyncHandler(async (req, res) => {
     const session = await openSession(String(req.params.tableId), req.user!);
     res.status(201).json({ session });
+  })
+);
+
+// One-tap confirmation for a customer-requested PENDING session.
+staffRouter.post(
+  "/sessions/:sessionId/confirm",
+  authorize("WAITER", "ADMIN"),
+  asyncHandler(async (req, res) => {
+    const session = await confirmSession(String(req.params.sessionId), req.user!);
+    res.json({ session });
   })
 );
 
@@ -400,6 +412,45 @@ staffRouter.post(
   })
 );
 
+// Edit or deactivate a staff account. Deactivation takes effect immediately
+// because authenticate() now re-checks isActive on every request.
+staffRouter.patch(
+  "/admin/users/:userId",
+  authorize("ADMIN"),
+  asyncHandler(async (req, res) => {
+    const body = z
+      .object({
+        name: z.string().min(1).max(100).optional(),
+        role: RoleSchema.optional(),
+        isActive: z.boolean().optional(),
+        password: z.string().min(6).max(128).optional(),
+      })
+      .parse(req.body);
+    if (req.params.userId === req.user!.id && body.isActive === false) {
+      throw new ConflictError("You cannot deactivate your own account", "SELF_DEACTIVATION");
+    }
+    const user = await prisma.user.update({
+      where: { id: String(req.params.userId) },
+      data: {
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.role !== undefined ? { role: body.role } : {}),
+        ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+        ...(body.password ? { passwordHash: await hashPassword(body.password) } : {}),
+      },
+      select: { id: true, email: true, name: true, role: true, isActive: true },
+    });
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.user!.id,
+        action: body.isActive === false ? "USER_DEACTIVATED" : body.isActive === true ? "USER_ACTIVATED" : "USER_UPDATED",
+        entityType: "User",
+        entityId: user.id,
+      },
+    });
+    res.json({ user });
+  })
+);
+
 staffRouter.get(
   "/admin/audit",
   authorize("ADMIN"),
@@ -429,10 +480,20 @@ staffRouter.patch(
         taxRateBps: z.number().int().min(0).max(10000).optional(),
         serviceChargeBps: z.number().int().min(0).max(10000).optional(),
         roundingEnabled: z.boolean().optional(),
+        upiId: z.string().max(100).nullable().optional(),
       })
       .parse(req.body);
     const settings = await updateSettings(body);
+    emitMenuUpdated({ type: "settings" });
     res.json({ settings });
+  })
+);
+
+staffRouter.get(
+  "/admin/menu",
+  authorize("ADMIN"),
+  asyncHandler(async (_req, res) => {
+    res.json({ categories: await getAdminMenu() });
   })
 );
 
@@ -441,10 +502,24 @@ staffRouter.post(
   authorize("ADMIN"),
   asyncHandler(async (req, res) => {
     const body = z
-      .object({ name: z.string().min(1).max(100), description: z.string().max(500).optional(), sortOrder: z.number().int().optional() })
+      .object({ name: z.string().min(1).max(100), description: z.string().max(500).optional(), sortOrder: z.number().int().optional(), isActive: z.boolean().optional() })
       .parse(req.body);
     const category = await prisma.menuCategory.create({ data: body });
+    emitMenuUpdated({ type: "menu" });
     res.status(201).json({ category });
+  })
+);
+
+staffRouter.patch(
+  "/admin/menu/categories/:categoryId",
+  authorize("ADMIN"),
+  asyncHandler(async (req, res) => {
+    const body = z
+      .object({ name: z.string().min(1).max(100).optional(), description: z.string().max(500).optional(), sortOrder: z.number().int().optional(), isActive: z.boolean().optional() })
+      .parse(req.body);
+    const category = await prisma.menuCategory.update({ where: { id: String(req.params.categoryId) }, data: body });
+    emitMenuUpdated({ type: "menu" });
+    res.json({ category });
   })
 );
 
@@ -458,14 +533,17 @@ staffRouter.post(
         name: z.string().min(1).max(150),
         description: z.string().max(1000).optional(),
         priceMinor: z.number().int().positive(),
-        imageUrl: z.string().url().optional(),
+        imageUrl: z.string().url().optional().or(z.literal("")),
         isAvailable: z.boolean().optional(),
         maxQuantity: z.number().int().min(1).max(100).optional(),
         dietaryTags: z.array(z.string()).optional(),
         allergens: z.array(z.string()).optional(),
+        sortOrder: z.number().int().optional(),
       })
       .parse(req.body);
-    const item = await prisma.menuItem.create({ data: body });
+    const data = { ...body, imageUrl: body.imageUrl ? body.imageUrl : null };
+    const item = await prisma.menuItem.create({ data });
+    emitMenuUpdated({ type: "menu" });
     res.status(201).json({ item });
   })
 );
@@ -476,13 +554,24 @@ staffRouter.patch(
   asyncHandler(async (req, res) => {
     const body = z
       .object({
+        categoryId: z.string().uuid().optional(),
         name: z.string().min(1).max(150).optional(),
         description: z.string().max(1000).optional(),
         priceMinor: z.number().int().positive().optional(),
+        imageUrl: z.string().url().optional().or(z.literal("")).nullable(),
         isAvailable: z.boolean().optional(),
+        maxQuantity: z.number().int().min(1).max(100).optional(),
+        dietaryTags: z.array(z.string()).optional(),
+        allergens: z.array(z.string()).optional(),
+        sortOrder: z.number().int().optional(),
       })
       .parse(req.body);
-    const item = await prisma.menuItem.update({ where: { id: String(req.params.itemId) }, data: body });
+    const data = {
+      ...body,
+      ...(body.imageUrl === "" ? { imageUrl: null } : {}),
+    };
+    const item = await prisma.menuItem.update({ where: { id: String(req.params.itemId) }, data });
+    emitMenuUpdated({ type: "menu" });
     res.json({ item });
   })
 );

@@ -1,11 +1,12 @@
 import { useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   formatMoney,
   type TableResponse,
   type SessionOrdersResponse,
+  type CustomerBillResponse,
   type OrderStatus,
   type OrderItemStatus,
 } from "../lib/api";
@@ -40,6 +41,7 @@ const ITEM_STYLE: Record<OrderItemStatus, string> = {
 
 export function OrderTracking() {
   const { tableCode = "" } = useParams();
+  const queryClient = useQueryClient();
 
   const { data: tableInfo } = useQuery<TableResponse>({
     queryKey: ["table", tableCode],
@@ -56,31 +58,65 @@ export function OrderTracking() {
     queryFn: () => api.get(`/public/sessions/${sessionId}/orders`, token),
   });
 
+  const { data: billData, refetch: refetchBill } = useQuery<CustomerBillResponse>({
+    queryKey: ["customer-bill", sessionId],
+    enabled: !!sessionId && !!token,
+    queryFn: () => api.get(`/public/sessions/${sessionId}/bill`, token),
+  });
+
   useEffect(() => {
     if (!token) return;
     const socket = getSocket(token);
-    const refresh = () => refetch();
+    const refresh = () => {
+      refetch();
+      refetchBill();
+      queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
+    };
     socket.on(SOCKET_EVENTS.ORDER_CREATED, refresh);
     socket.on(SOCKET_EVENTS.ORDER_UPDATED, refresh);
     socket.on(SOCKET_EVENTS.ITEM_STATUS, refresh);
+    socket.on(SOCKET_EVENTS.BILL_REQUESTED, refresh);
+    socket.on(SOCKET_EVENTS.SESSION_CLOSED, refresh);
     return () => {
       socket.off(SOCKET_EVENTS.ORDER_CREATED, refresh);
       socket.off(SOCKET_EVENTS.ORDER_UPDATED, refresh);
       socket.off(SOCKET_EVENTS.ITEM_STATUS, refresh);
+      socket.off(SOCKET_EVENTS.BILL_REQUESTED, refresh);
+      socket.off(SOCKET_EVENTS.SESSION_CLOSED, refresh);
     };
-  }, [token, refetch]);
+  }, [token, refetch, refetchBill, queryClient, tableCode]);
 
   const requestBill = useMutation({
     mutationFn: () => api.post(`/public/sessions/${sessionId}/request-bill`, {}, token),
-    onSuccess: () => refetch(),
+    onSuccess: () => {
+      refetch();
+      refetchBill();
+    },
   });
 
   const assistance = useMutation({
     mutationFn: () => api.post(`/public/sessions/${sessionId}/assistance`, {}, token),
   });
 
+  const cancelItem = useMutation({
+    mutationFn: (itemId: string) => api.post(`/public/order-items/${itemId}/cancel`, {}, token),
+    onSuccess: () => {
+      refetch();
+      refetchBill();
+    },
+  });
+
   const orders = data?.orders ?? [];
   const sessionStatus = data?.session.status ?? tableInfo?.session?.status;
+  const bill = billData?.bill;
+  const upiLink =
+    bill && billData?.settings.upiId
+      ? `upi://pay?pa=${encodeURIComponent(billData.settings.upiId)}&pn=${encodeURIComponent(
+          billData.settings.cafeName
+        )}&am=${(billData.dueMinor / 100).toFixed(2)}&cu=${bill.currency}&tn=${encodeURIComponent(
+          `Table ${tableInfo?.table.number ?? ""} ${bill.billNumber ?? "Bill"}`
+        )}`
+      : null;
 
   return (
     <div className="min-h-screen pb-24">
@@ -95,7 +131,67 @@ export function OrderTracking() {
       </header>
 
       <main className="p-3 space-y-3">
-        {!orders.length && <div className="p-8 text-center text-slate-500">No orders yet.</div>}
+        {bill && (
+          <div className="card p-3 space-y-2">
+            <div className="flex justify-between items-center">
+              <div className="font-semibold">Bill {bill.billNumber ?? "(preview)"}</div>
+              <span className="badge bg-slate-100">{bill.status}</span>
+            </div>
+            <div className="divide-y text-sm">
+              {bill.lineItems.map((l) => (
+                <div key={l.id} className="flex justify-between py-1.5">
+                  <span>
+                    {l.quantity}× {l.nameSnapshot}
+                  </span>
+                  <span>{formatMoney(l.lineTotalMinor, bill.currency)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="border-t pt-2 text-sm space-y-1">
+              <div className="flex justify-between">
+                <span>Subtotal</span>
+                <span>{formatMoney(bill.subtotalMinor, bill.currency)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Tax</span>
+                <span>{formatMoney(bill.taxMinor, bill.currency)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Service charge</span>
+                <span>{formatMoney(bill.serviceChargeMinor, bill.currency)}</span>
+              </div>
+              {bill.roundingMinor !== 0 && (
+                <div className="flex justify-between">
+                  <span>Rounding</span>
+                  <span>{formatMoney(bill.roundingMinor, bill.currency)}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-semibold pt-1 border-t">
+                <span>Total</span>
+                <span>{formatMoney(bill.totalMinor, bill.currency)}</span>
+              </div>
+              {billData.dueMinor !== bill.totalMinor && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>Paid</span>
+                  <span>{formatMoney(billData.paidMinor, bill.currency)}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-bold">
+                <span>Amount due</span>
+                <span>{formatMoney(billData.dueMinor, bill.currency)}</span>
+              </div>
+            </div>
+            {upiLink && billData.dueMinor > 0 && (
+              <a className="btn btn-accent w-full text-center" href={upiLink}>
+                Pay with UPI
+              </a>
+            )}
+            {billData.isPreview && (
+              <div className="text-xs text-slate-500">Preview — this will be finalised when the waiter generates the bill.</div>
+            )}
+          </div>
+        )}
+        {!orders.length && !bill && <div className="p-8 text-center text-slate-500">No orders yet.</div>}
         {orders.map((o) => (
           <div key={o.id} className="card p-3">
             <div className="flex justify-between items-center">
@@ -110,6 +206,15 @@ export function OrderTracking() {
                   </span>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className={`badge ${ITEM_STYLE[it.status]}`}>{ITEM_LABEL[it.status]}</span>
+                    {it.status === "QUEUED" && sessionStatus === "ACTIVE" && (
+                      <button
+                        className="btn btn-ghost !px-2 !py-1 text-xs"
+                        disabled={cancelItem.isPending}
+                        onClick={() => cancelItem.mutate(it.id)}
+                      >
+                        Cancel
+                      </button>
+                    )}
                     <span>{formatMoney(it.lineTotalMinor)}</span>
                   </div>
                 </div>

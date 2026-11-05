@@ -1,9 +1,9 @@
 import { useMemo, useState, useEffect } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, formatMoney, type PublicMenuResponse, type TableResponse } from "../lib/api";
 import { SOCKET_EVENTS, getSocket } from "../lib/socket";
-import { saveSession, loadSession } from "../lib/session";
+import { saveSession, loadSession, loadCart, saveCart } from "../lib/session";
 
 interface CartLine {
   key: string;
@@ -24,9 +24,10 @@ function newIdempotencyKey() {
 
 export function CustomerMenu() {
   const { tableCode = "" } = useParams();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [cart, setCart] = useState<CartLine[]>([]);
+  const [cart, setCart] = useState<CartLine[]>(() => loadCart(tableCode));
+  const [menuSearch, setMenuSearch] = useState("");
+  const [orderPlaced, setOrderPlaced] = useState(false);
   const [activeCat, setActiveCat] = useState<string | null>(null);
   const [customizing, setCustomizing] = useState<PublicMenuResponse["categories"][0]["items"][0] | null>(null);
   const [customVariant, setCustomVariant] = useState<string | undefined>();
@@ -43,13 +44,16 @@ export function CustomerMenu() {
   const { data: tableInfo } = useQuery<TableResponse>({
     queryKey: ["table", tableCode],
     queryFn: () => api.get(`/public/tables/${tableCode}`),
+    // Before a waiter confirms, the customer has no session token and therefore
+    // no authenticated socket room; poll so the waiting screen flips to the menu
+    // on its own instead of needing a manual refresh.
+    refetchInterval: (query) =>
+      query.state.data?.session?.status === "PENDING" ? 5000 : false,
   });
 
-  const { data: sessionOrders, refetch: refetchOrders } = useQuery({
-    queryKey: ["session-orders", tableInfo?.session?.id],
-    enabled: !!tableInfo?.session?.id,
-    queryFn: () => api.get(`/public/sessions/${tableInfo!.session!.id}/orders`, tableInfo!.sessionToken),
-  });
+  useEffect(() => {
+    saveCart(tableCode, cart);
+  }, [cart, tableCode]);
 
   // Persist the session-scoped token so tracking screens share the credential.
   useEffect(() => {
@@ -65,19 +69,26 @@ export function CustomerMenu() {
   useEffect(() => {
     const token = tableInfo?.sessionToken ?? loadSession(tableCode)?.token ?? undefined;
     const socket = getSocket(token);
-    const onOrder = () => refetchOrders();
+    const onOrder = () => {
+      queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
+    };
+    const onMenu = () => queryClient.invalidateQueries({ queryKey: ["menu"] });
     socket.on(SOCKET_EVENTS.ORDER_UPDATED, onOrder);
     socket.on(SOCKET_EVENTS.ITEM_STATUS, onOrder);
     socket.on(SOCKET_EVENTS.SESSION_CLOSED, onOrder);
+    socket.on(SOCKET_EVENTS.SESSION_REOPENED, onOrder);
+    socket.on(SOCKET_EVENTS.MENU_UPDATED, onMenu);
     return () => {
       socket.off(SOCKET_EVENTS.ORDER_UPDATED, onOrder);
       socket.off(SOCKET_EVENTS.ITEM_STATUS, onOrder);
       socket.off(SOCKET_EVENTS.SESSION_CLOSED, onOrder);
+      socket.off(SOCKET_EVENTS.SESSION_REOPENED, onOrder);
+      socket.off(SOCKET_EVENTS.MENU_UPDATED, onMenu);
     };
-  }, [refetchOrders, tableInfo?.sessionToken, tableCode]);
+  }, [tableInfo?.sessionToken, tableCode, queryClient]);
 
-  const sessionId = tableInfo?.session?.id;
   const canOrder = tableInfo?.canOrder;
+  const sessionStatus = tableInfo?.session?.status;
 
   const subtotal = useMemo(
     () => cart.reduce((a, l) => a + l.unitPriceMinor * l.quantity, 0),
@@ -85,11 +96,47 @@ export function CustomerMenu() {
   );
 
   const orderMutation = useMutation({
-    mutationFn: (payload: unknown) => api.post("/public/orders", payload, tableInfo?.sessionToken ?? null),
+    mutationFn: async (payload: unknown) => {
+      const token = tableInfo?.sessionToken ?? null;
+      try {
+        return await api.post("/public/orders", payload, token);
+      } catch (e) {
+        // A tab can outlive its signed session token (or be resumed from the
+        // back/forward cache). Re-resolve the QR once and retry with the same
+        // idempotency key, so a double tap still creates exactly one order.
+        if ((e as Error & { status?: number }).status === 401) {
+          const fresh = await api.get<TableResponse>(`/public/tables/${tableCode}`);
+          queryClient.setQueryData(["table", tableCode], fresh);
+          if (fresh.sessionToken) {
+            return api.post("/public/orders", payload, fresh.sessionToken);
+          }
+        }
+        throw e;
+      }
+    },
     onSuccess: () => {
       setCart([]);
+      saveCart(tableCode, []);
       setOrderError(null);
-      refetchOrders();
+        setOrderPlaced(true);
+        queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
+      setTimeout(() => setOrderPlaced(false), 4000);
+    },
+    onError: (e: Error) => {
+      setOrderError(e.message);
+      // A 401/409 often means the token expired/closed; re-resolve the QR to
+      // mint a fresh session token silently where possible.
+      if ((e as Error & { status?: number }).status === 401 || (e as Error & { status?: number }).status === 409) {
+        queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
+      }
+    },
+  });
+
+  const requestSession = useMutation({
+    mutationFn: () => api.post(`/public/tables/${tableCode}/start-session`, {}),
+    onSuccess: () => {
+      setOrderError(null);
+      queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
     },
     onError: (e: Error) => setOrderError(e.message),
   });
@@ -100,6 +147,28 @@ export function CustomerMenu() {
     setCustomAddons([]);
     setCustomQty(1);
     setCustomNotes("");
+  }
+
+  function addSimpleItem(item: PublicMenuResponse["categories"][0]["items"][0]) {
+    setCart((prev) => {
+      const key = item.id;
+      const existing = prev.find((l) => l.key === key);
+      if (existing) {
+        return prev.map((l) => (l.key === key ? { ...l, quantity: l.quantity + 1 } : l));
+      }
+      return [
+        ...prev,
+        {
+          key,
+          menuItemId: item.id,
+          name: item.name,
+          addonIds: [],
+          addonNames: [],
+          unitPriceMinor: item.priceMinor,
+          quantity: 1,
+        },
+      ];
+    });
   }
 
   function addFromCustomizer() {
@@ -156,8 +225,20 @@ export function CustomerMenu() {
     orderMutation.mutate(payload);
   }
 
-  const categories = menu?.categories ?? [];
-  const shown = activeCat ? categories.filter((c) => c.id === activeCat) : categories;
+  const categories = useMemo(() => menu?.categories ?? [], [menu]);
+  const filtered = useMemo(() => {
+    const q = menuSearch.trim().toLowerCase();
+    if (!q) return categories;
+    return categories
+      .map((c) => ({
+        ...c,
+        items: c.items.filter(
+          (item) => item.name.toLowerCase().includes(q) || item.description?.toLowerCase().includes(q)
+        ),
+      }))
+      .filter((c) => c.items.length > 0);
+  }, [categories, menuSearch]);
+  const shown = activeCat ? filtered.filter((c) => c.id === activeCat) : filtered;
 
   return (
     <div className="min-h-screen pb-40">
@@ -172,15 +253,41 @@ export function CustomerMenu() {
             </div>
             <div className="flex gap-2">
               <Link to={`/t/${tableCode}/orders`} className="btn btn-ghost !text-white !border-white/30 text-sm">
-                My Orders
+                My Orders / Bill
               </Link>
             </div>
           </div>
+          <div className="mt-2">
+            <input
+              className="input w-full !bg-white/10 !text-white !placeholder-white/60 !border-white/30"
+              placeholder="Search menu…"
+              value={menuSearch}
+              onChange={(e) => setMenuSearch(e.target.value)}
+            />
+          </div>
           {!canOrder && (
-            <div className="mt-2 rounded-lg bg-orange-600/20 border border-orange-400/40 px-3 py-2 text-sm">
-              {tableInfo?.session
-                ? "Ordering is closed for this table. Please see a waiter for the bill."
-                : "No active session at this table. Please ask a waiter to open your table."}
+            <div className="mt-2 rounded-lg bg-orange-600/20 border border-orange-400/40 px-3 py-2 text-sm space-y-2">
+              {sessionStatus === "PENDING" ? (
+                <div>Waiting for a waiter to confirm your table. You can browse the menu in the meantime.</div>
+              ) : tableInfo?.session ? (
+                <div>Ordering is closed for this table. Please see a waiter for the bill.</div>
+              ) : (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <span>No active session at this table.</span>
+                  <button
+                    className="btn btn-accent !bg-orange-500 !text-white"
+                    disabled={requestSession.isPending}
+                    onClick={() => requestSession.mutate()}
+                  >
+                    {requestSession.isPending ? "Requesting…" : "Start ordering"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {orderPlaced && (
+            <div className="mt-2 rounded-lg bg-emerald-600/20 border border-emerald-400/40 px-3 py-2 text-sm">
+              Order placed ✓
             </div>
           )}
         </header>
@@ -232,11 +339,20 @@ export function CustomerMenu() {
                         <span className="badge bg-amber-100 text-amber-700">contains {item.allergens.join(", ")}</span>
                       )}
                     </div>
-                    {canOrder && (
-                      <button className="btn btn-primary mt-2 text-sm" onClick={() => openCustomizer(item)}>
+                    {!item.isAvailable ? (
+                      <span className="badge bg-slate-200 text-slate-600 mt-2">Unavailable</span>
+                    ) : canOrder ? (
+                      <button
+                        className="btn btn-primary mt-2 text-sm"
+                        onClick={() =>
+                          item.variants.length || item.addons.length
+                            ? openCustomizer(item)
+                            : addSimpleItem(item)
+                        }
+                      >
                         {item.variants.length || item.addons.length ? "Customize" : "Add"}
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               ))}
