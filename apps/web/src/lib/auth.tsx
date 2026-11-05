@@ -1,6 +1,5 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 import { api } from "./api";
-import { reconnectWithToken } from "./socket";
 
 interface User {
   id: string;
@@ -45,7 +44,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("cafe_token", r.token);
     setToken(r.token);
     setUser(r.user);
-    reconnectWithToken(r.token);
+    // Socket.io is only needed once a realtime screen mounts; keep it out of
+    // the landing/login entry bundle.
+    void import("./socket").then(({ reconnectWithToken }) => reconnectWithToken(r.token));
     return r.user;
   };
 

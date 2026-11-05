@@ -19,7 +19,7 @@ export function LandingPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-cream">
-      <header className="mx-auto flex w-full max-w-md items-center justify-between px-4 pt-5">
+      <header className="mx-auto flex w-full max-w-md items-center justify-between px-4 pt-safe">
         <div>
           <div className="display text-xl font-semibold">Smart Café</div>
           <div className="text-xs font-medium uppercase tracking-[0.14em] text-muted">At your table</div>

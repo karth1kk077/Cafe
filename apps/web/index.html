@@ -2,16 +2,31 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f172a" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#2b1d14" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="Scan the QR code on your table to order, track every dish live, and settle the bill from your phone."
+    />
+    <meta name="format-detection" content="telephone=no" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Smart Café" />
     <link rel="icon" href="/icon-192.png" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>Smart Café</title>
+    <!-- Paint the brand background before the CSS bundle arrives, so a cold
+         start on a phone never flashes white. -->
+    <style>
+      html {
+        background: #faf6f0;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>Please enable JavaScript to order from your table.</noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

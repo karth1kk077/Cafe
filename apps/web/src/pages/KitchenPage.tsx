@@ -167,7 +167,7 @@ export function KitchenPage() {
       {/* Header + filter bar stick together so they never overlap, whatever
           the header's height ends up being. */}
       <div className="sticky top-0 z-20">
-        <header className="bg-espresso text-white px-4 py-3">
+        <header className="bg-espresso text-white px-4 pb-3 pt-safe">
           <div className="flex items-center justify-between">
             <div>
               <div className="display text-lg font-bold">Kitchen</div>

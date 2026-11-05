@@ -31,7 +31,7 @@ export function MenuHeader({
   ordersHref: string;
 }) {
   return (
-    <header className="bg-espresso text-white px-4 pt-3 pb-3">
+    <header className="bg-espresso text-white px-4 pb-3 pt-safe">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-xs font-medium uppercase tracking-[0.14em] text-white/60">{cafeName}</div>

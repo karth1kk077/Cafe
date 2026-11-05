@@ -180,7 +180,7 @@ export function OrderTracking() {
 
   return (
     <div className="min-h-screen bg-cream pb-28">
-      <header className="sticky top-0 z-20 flex items-center justify-between gap-3 bg-espresso px-4 py-3 text-white">
+      <header className="sticky top-0 z-20 flex items-center justify-between gap-3 bg-espresso px-4 pb-3 pt-safe text-white">
         <div className="min-w-0">
           <div className="text-xs font-medium uppercase tracking-[0.14em] text-white/60">
             Table {tableInfo?.table.number ?? "…"}

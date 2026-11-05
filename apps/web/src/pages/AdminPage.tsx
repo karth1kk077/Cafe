@@ -152,7 +152,7 @@ export function AdminPage() {
       {/* Header + tab bar stick together so the tab bar can't slide under the
           header on narrow screens. */}
       <div className="sticky top-0 z-20 print:hidden">
-        <header className="bg-espresso text-white px-4 py-3 flex items-center justify-between">
+        <header className="bg-espresso text-white px-4 pb-3 pt-safe flex items-center justify-between">
           <div>
             <div className="display text-lg font-bold">Admin</div>
             <div className="text-xs opacity-70">{user?.name}</div>

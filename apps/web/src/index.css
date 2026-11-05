@@ -1,10 +1,12 @@
 @import "tailwindcss";
-/* Self-hosted, `font-display: swap` (Fontsource ships swap by default). No CDN. */
-@import "@fontsource/fraunces/600.css";
-@import "@fontsource/fraunces/700.css";
-@import "@fontsource/dm-sans/400.css";
-@import "@fontsource/dm-sans/500.css";
-@import "@fontsource/dm-sans/700.css";
+/* Self-hosted, `font-display: swap` (Fontsource ships swap by default). No CDN.
+   Latin-only subsets keep the build and the first paint small; the browser
+   still fetches nothing until a glyph is actually needed. */
+@import "@fontsource/fraunces/latin-600.css";
+@import "@fontsource/fraunces/latin-700.css";
+@import "@fontsource/dm-sans/latin-400.css";
+@import "@fontsource/dm-sans/latin-500.css";
+@import "@fontsource/dm-sans/latin-700.css";
 
 /*
  * Café design tokens (Tailwind v4 `@theme`). Every screen — customer and staff —
@@ -56,6 +58,8 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Removes the legacy 300ms tap delay without disabling pinch-zoom. */
+  touch-action: manipulation;
 }
 
 /* Prices and quantities never jitter as digits change. */
@@ -207,11 +211,15 @@ a:focus-visible {
   transform: scale(0.97);
 }
 
-/* Bottom padding that clears the home-indicator area on notched phones
-   (env() is 0 on desktop, so this is a no-op there). */
+/* Safe-area helpers for notched phones in standalone mode. env() is 0 on
+   desktop and on browsers without cutouts, so these are no-ops there. */
 .pb-safe {
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 }
+.pt-safe {
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+}
+
 
 /* Subtle entrance for sheets/toasts; disabled when the user prefers less motion. */
 @keyframes cafe-rise {
