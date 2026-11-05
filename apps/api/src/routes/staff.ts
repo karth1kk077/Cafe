@@ -19,6 +19,7 @@ import {
   closeSession,
   reopenSession,
   getSessionDetail,
+  SELF_SERVICE_EMAIL,
 } from "../services/sessionService.js";
 import { listOrders, getOrder } from "../services/orderService.js";
 import {
@@ -381,6 +382,9 @@ staffRouter.get(
   authorize("ADMIN"),
   asyncHandler(async (_req, res) => {
     const users = await prisma.user.findMany({
+      // The QR self-service actor is an implementation detail, never a staff
+      // account an admin can edit or deactivate.
+      where: { email: { not: SELF_SERVICE_EMAIL } },
       select: { id: true, email: true, name: true, role: true, isActive: true, createdAt: true },
       orderBy: { createdAt: "asc" },
     });

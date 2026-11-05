@@ -709,6 +709,123 @@ describe("admin tables & QR codes", () => {
   });
 });
 
+describe("QR-first session opening", () => {
+  it("lets an AVAILABLE table be ordered from without staff action", async () => {
+    await resetTable();
+    const lookup = await request(app).get(`/api/public/tables/${tableToken}`);
+    expect(lookup.status).toBe(200);
+    expect(lookup.body.canOrder).toBe(false);
+    expect(lookup.body.orderable).toBe(true);
+    expect(lookup.body.sessionToken).toBeNull();
+
+    const opened = await request(app).post(`/api/public/tables/${tableToken}/session`).send({});
+    expect(opened.status).toBe(201);
+    expect(opened.body.session.status).toBe("ACTIVE");
+    expect(opened.body.canOrder).toBe(true);
+    expect(opened.body.sessionToken).toBeTruthy();
+
+    const order = await placeOrder(opened.body.sessionToken, [{ menuItemId: latteId, quantity: 1 }]);
+    expect(order.status).toBe(201);
+
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: "SESSION_OPENED", entityId: opened.body.session.id },
+    });
+    expect(audit?.metadata).toMatchObject({ source: "customer_qr" });
+
+    await closeSessionClean(opened.body.session.id);
+  });
+
+  it("is idempotent and lets a second phone join the same session", async () => {
+    await resetTable();
+    const first = await request(app).post(`/api/public/tables/${tableToken}/session`).send({});
+    expect(first.status).toBe(201);
+    const sessionId = first.body.session.id as string;
+
+    // Second device scanning the same QR joins the same ACTIVE session.
+    const second = await request(app).post(`/api/public/tables/${tableToken}/session`).send({});
+    expect(second.status).toBe(200);
+    expect(second.body.session.id).toBe(sessionId);
+    expect(second.body.sessionToken).toBeTruthy();
+
+    // Both tokens authorize orders into the one session.
+    const a = await placeOrder(first.body.sessionToken, [{ menuItemId: latteId, quantity: 1 }]);
+    const b = await placeOrder(second.body.sessionToken, [{ menuItemId: latteId, quantity: 1 }]);
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(201);
+    expect(a.body.order.sessionId).toBe(sessionId);
+    expect(b.body.order.sessionId).toBe(sessionId);
+
+    await closeSessionClean(sessionId);
+  });
+
+  it("rejects a stale token after close and opens a fresh session on re-scan", async () => {
+    await resetTable();
+    const first = await request(app).post(`/api/public/tables/${tableToken}/session`).send({});
+    const staleToken = first.body.sessionToken as string;
+    await placeOrder(staleToken, [{ menuItemId: latteId, quantity: 1 }]);
+    await closeSessionClean(first.body.session.id);
+
+    // The old page still holds a token for the closed session.
+    const late = await placeOrder(staleToken, [{ menuItemId: latteId, quantity: 1 }]);
+    expect(late.status).toBe(409);
+    expect(late.body.error.code).toBe("SESSION_CLOSED");
+
+    // A re-scan after the group left opens a new session for the next group.
+    const second = await request(app).post(`/api/public/tables/${tableToken}/session`).send({});
+    expect(second.status).toBe(201);
+    expect(second.body.session.id).not.toBe(first.body.session.id);
+    expect(second.body.sessionToken).toBeTruthy();
+    await closeSessionClean(second.body.session.id);
+  });
+
+  it("does not re-open ordering when the bill has been requested", async () => {
+    await resetTable();
+    const opened = await request(app).post(`/api/public/tables/${tableToken}/session`).send({});
+    const sessionId = opened.body.session.id as string;
+    const token = opened.body.sessionToken as string;
+    await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+
+    const bill = await request(app)
+      .post(`/api/public/sessions/${sessionId}/request-bill`)
+      .set("x-session-token", token)
+      .send({});
+    expect(bill.status).toBe(200);
+
+    const again = await request(app).post(`/api/public/tables/${tableToken}/session`).send({});
+    expect(again.status).toBe(200);
+    expect(again.body.session.id).toBe(sessionId);
+    expect(again.body.session.status).toBe("BILL_REQUESTED");
+    expect(again.body.canOrder).toBe(false);
+    expect(again.body.sessionToken).toBeNull();
+
+    // Even the still-valid token cannot order once the session left ACTIVE.
+    const denied = await placeOrder(token, [{ menuItemId: latteId, quantity: 1 }]);
+    expect(denied.status).toBe(409);
+    expect(denied.body.error.code).toBe("SESSION_CLOSED");
+
+    await closeSessionClean(sessionId);
+  });
+
+  it("auto-closes a customer-opened session that never produced an order", async () => {
+    await resetTable();
+    const opened = await request(app).post(`/api/public/tables/${tableToken}/session`).send({});
+    const sessionId = opened.body.session.id as string;
+
+    const { closeIdleCustomerSessions } = await import("../services/sessionService.js");
+    await prisma.diningSession.update({
+      where: { id: sessionId },
+      data: { openedAt: new Date(Date.now() - 31 * 60 * 1000) },
+    });
+    const closed = await closeIdleCustomerSessions();
+    expect(closed).toBeGreaterThanOrEqual(1);
+
+    const session = await prisma.diningSession.findUniqueOrThrow({ where: { id: sessionId } });
+    expect(session.status).toBe("CLOSED");
+    const table = await prisma.cafeTable.findUniqueOrThrow({ where: { id: tableId } });
+    expect(table.status).toBe("AVAILABLE");
+  });
+});
+
 describe("frictionless UX", () => {
   it("start-session creates PENDING, waiter confirms, then ordering works", async () => {
     await resetTable();

@@ -44,6 +44,34 @@
 - [x] Client-facing errors never expose stack traces, DB details, or internals
       (centralized error handler returns generic `INTERNAL_ERROR`).
 
+## QR-first self-service sessions
+
+- [x] Scanning an `AVAILABLE` table's QR no longer requires staff action. `POST
+      /api/public/tables/:tableCode/session` idempotently opens (or joins) an `ACTIVE`
+      session inside a transaction that takes `SELECT ... FOR UPDATE` on the table row.
+- [x] The session is opened **lazily on the first order**, never on a bare scan, so link
+      previews, bots, and people only browsing do not create ghost sessions or flip a table
+      to `OCCUPIED`.
+- [x] `DiningSession.openedBy` still points at a real `User`: a dedicated non-login
+      "Self-service" actor (random unusable password hash) is created on demand and excluded
+      from staff user lists. No schema migration is required.
+- [x] The open is audited as `SESSION_OPENED` with `{source:"customer_qr"}`; the waiter
+      dashboard receives `session.opened` immediately.
+- [x] A second phone at the same table joins the same `ACTIVE` session; a retry is idempotent.
+- [x] Ordering stays disabled for `BILL_REQUESTED`/`PAYMENT_PENDING`, and a stale token for a
+      `CLOSED` session is still rejected with `409 SESSION_CLOSED` by the order transaction.
+- [x] Stricter per-IP rate limit on the session-open endpoint (`SESSION_RATE_LIMIT_MAX`,
+      default 10/min) than on read-only QR lookups.
+- [x] Idle sweep: a customer-opened session with **zero orders** older than
+      `CUSTOMER_SESSION_IDLE_TIMEOUT_MS` (default 30 min) is auto-closed and audited
+      (`SESSION_AUTO_CLOSED`). The sweep re-locks each candidate and re-checks for orders, so
+      an order that lands mid-sweep is never discarded.
+- [ ] **Residual risk:** someone holding a photo of a table's QR can open an empty session
+      remotely (and, until the idle sweep runs, occupy that table). The mitigation is QR
+      rotation in **Admin → Tables & QR** (`PATCH /staff/tables/:tableId {rotateQr:true}`),
+      which invalidates every previously printed copy. Physical QR photos are not a
+      credential: they still cannot order into another table's session or read its data.
+
 ## QR & IDOR
 - [x] QR `qrToken` is 64-char unpredictable hex; identifies a table, not an authorization.
 - [x] Table resolved server-side; clients cannot supply an arbitrary table id to order.

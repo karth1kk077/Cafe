@@ -6,7 +6,7 @@ import { config } from "../config/index.js";
 import { UnauthorizedError, NotFoundError } from "../lib/errors.js";
 import { getPublicMenu, resolveTableByCode, getSettings } from "../services/menuService.js";
 import { createOrder, getOrder } from "../services/orderService.js";
-import { requestBill, requestSession } from "../services/sessionService.js";
+import { openCustomerSession, requestBill, requestSession } from "../services/sessionService.js";
 import { cancelCustomerOrderItem } from "../services/orderItemService.js";
 import { getSessionBillView } from "../services/billingService.js";
 import { signCustomerSessionToken } from "../lib/customerSession.js";
@@ -18,6 +18,7 @@ import {
   emitAssistance,
   emitItemStatus,
   emitOrderUpdated,
+  emitSessionOpened,
 } from "../socket/index.js";
 
 export const publicRouter = Router();
@@ -34,6 +35,16 @@ const orderLimiter = rateLimit({
 const tableLookupLimiter = rateLimit({
   windowMs: config.RATE_LIMIT_WINDOW_MS,
   max: config.RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: { code: "RATE_LIMITED", message: "Too many requests. Please slow down." } },
+});
+
+// Opening a session writes state, so it gets a much tighter per-IP budget than
+// a read-only lookup. A table only needs this once per visit.
+const sessionOpenLimiter = rateLimit({
+  windowMs: config.RATE_LIMIT_WINDOW_MS,
+  max: config.SESSION_RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: { code: "RATE_LIMITED", message: "Too many requests. Please slow down." } },
@@ -56,13 +67,49 @@ publicRouter.get(
   asyncHandler(async (req, res) => {
     const { table, activeSession } = await resolveTableByCode(String(req.params.tableCode));
     const canOrder = activeSession?.status === "ACTIVE";
+    // An AVAILABLE table is orderable even before a session exists: the session
+    // is opened lazily on the first order (not on scan), so the menu can show
+    // Add buttons without turning browsing into an occupied table.
+    const orderable = activeSession ? canOrder : table.status === "AVAILABLE";
     res.json({
       table: { number: table.number, status: table.status },
       session: activeSession
         ? { id: activeSession.id, status: activeSession.status, openedAt: activeSession.openedAt }
         : null,
       canOrder,
+      orderable,
       sessionToken: canOrder && activeSession ? signCustomerSessionToken(activeSession.id, table.id) : null,
+    });
+  })
+);
+
+// Lazily open (or join) the table's orderable session. Called by the customer
+// client when they first place an order, never on a bare scan. Idempotent:
+// a second phone joins the same ACTIVE session; a retry returns the same row.
+publicRouter.post(
+  "/tables/:tableCode/session",
+  sessionOpenLimiter,
+  asyncHandler(async (req, res) => {
+    const { table } = await resolveTableByCode(String(req.params.tableCode));
+    const { session, created } = await openCustomerSession(table.id);
+    const canOrder = session.status === "ACTIVE";
+    if (created) {
+      emitSessionOpened(
+        {
+          sessionId: session.id,
+          tableNumber: table.number,
+          status: session.status,
+          source: "customer_qr",
+        },
+        session.id
+      );
+    }
+    res.status(created ? 201 : 200).json({
+      table: { number: table.number, status: canOrder ? "OCCUPIED" : table.status },
+      session: { id: session.id, status: session.status, openedAt: session.openedAt },
+      canOrder,
+      orderable: canOrder,
+      sessionToken: canOrder ? signCustomerSessionToken(session.id, table.id) : null,
     });
   })
 );

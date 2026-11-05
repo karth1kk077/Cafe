@@ -71,6 +71,8 @@ export interface TableResponse {
   table: { number: string; status: string };
   session: { id: string; status: string; openedAt: string } | null;
   canOrder: boolean;
+  /** An AVAILABLE table can be ordered from; the session opens on first order. */
+  orderable?: boolean;
   /** Present only when the table has an orderable session. */
   sessionToken: string | null;
 }

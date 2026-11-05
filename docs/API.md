@@ -38,8 +38,9 @@ eligibility is re-checked server-side on every lookup and every order submission
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
 | GET | `/menu` | public | categories + items + variants + addons + settings |
-| GET | `/tables/:tableCode` | public | resolve QR token -> `{table, session, canOrder, sessionToken}`; a `PENDING` session is returned with `canOrder:false` and no token; rate-limited (`RATE_LIMIT_MAX`); payload carries no internal IDs (404 for unknown/inactive tokens) |
-| POST | `/tables/:tableCode/start-session` | public | customer "start ordering"; creates (or returns) a `PENDING` session for a waiter to confirm; never mints a token while pending; audited `SESSION_REQUESTED` |
+| GET | `/tables/:tableCode` | public | resolve QR token -> `{table, session, canOrder, orderable, sessionToken}`. `orderable:true` for an `AVAILABLE` table with no session (the session opens lazily on first order); `canOrder` stays `true` only for an `ACTIVE` session. A `PENDING` session is returned with `canOrder:false`; rate-limited (`RATE_LIMIT_MAX`); payload carries no internal IDs (404 for unknown/inactive tokens) |
+| POST | `/tables/:tableCode/session` | public | **QR-first lazy open.** Idempotently returns the table's current session or opens an `ACTIVE` one in a transaction (`FOR UPDATE` on the table row). A second phone joins the same session; a retry returns the same row. Returns `{table, session, canOrder, orderable, sessionToken}`. Does **not** re-open ordering when the session is `BILL_REQUESTED`/`PAYMENT_PENDING`. Audited `SESSION_OPENED` with `{source:"customer_qr"}`; emits `session.opened`; stricter rate limit (`SESSION_RATE_LIMIT_MAX`) |
+| POST | `/tables/:tableCode/start-session` | public | Legacy customer "ask a waiter" flow: creates (or returns) a `PENDING` session for a waiter to confirm; never mints a token while pending; audited `SESSION_REQUESTED`. The QR-first client no longer uses this; calling `/session` promotes a leftover `PENDING` row to `ACTIVE` |
 | POST | `/orders` | `x-session-token` | create order; body `{idempotencyKey, items[]}` (no table/session/client prices); 409 `SESSION_CLOSED`; prices computed server-side |
 | GET | `/sessions/:sessionId/bill` | `x-session-token` | bill view: snapshot when generated, otherwise a preview from non-cancelled items; returns `{bill, paidMinor, dueMinor, isPreview, settings:{cafeName,currency,upiId}}` |
 | POST | `/order-items/:itemId/cancel` | `x-session-token` | customer cancels their own `QUEUED` item `{reason?}`; later states are rejected |
@@ -115,7 +116,7 @@ Rooms are assigned **server-side**; clients cannot name their own room:
 
 Events emitted (notifications — always re-fetch state over REST):
 `order.created`, `order.updated`, `order_item.status_changed`, `order_item.ready`,
-`order_item.served`, `bill.requested`, `session.closed`, `session.reopened`,
+`order_item.served`, `bill.requested`, `session.opened`, `session.closed`, `session.reopened`,
 `assistance_request.created`, `menu.updated` (broadcast so "86'd" items disappear for
 customers and staff immediately).
 

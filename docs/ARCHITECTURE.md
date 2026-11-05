@@ -49,7 +49,7 @@ flowchart TD
 - Events are **notifications, not source of truth**. State is persisted in PostgreSQL first;
   clients re-fetch over REST after any event and on reconnect.
 - Events: `order.created`, `order.updated`, `order_item.status_changed`, `order_item.ready`,
-  `order_item.served`, `bill.requested`, `session.closed`, `session.reopened`,
+  `order_item.served`, `bill.requested`, `session.opened`, `session.closed`, `session.reopened`,
   `assistance_request.created`, `menu.updated`.
 - Scaling beyond one instance: swap the default in-memory Socket.IO adapter for the Redis
   adapter (`@socket.io/redis-adapter`) and put the API behind a load balancer with sticky

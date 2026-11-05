@@ -40,6 +40,12 @@ const EnvSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
   RATE_LIMIT_MAX: z.coerce.number().default(100),
   ORDER_RATE_LIMIT_MAX: z.coerce.number().default(30),
+  // Stricter budget for the endpoint that lazily opens a table session from a
+  // QR scan. Lower than the general lookup budget because it writes state.
+  SESSION_RATE_LIMIT_MAX: z.coerce.number().default(10),
+  // A customer-opened session with no orders is closed after this idle window
+  // so a peek at the menu cannot leave a table occupied forever.
+  CUSTOMER_SESSION_IDLE_TIMEOUT_MS: z.coerce.number().default(30 * 60 * 1000),
   // Public origin encoded into table QR codes (e.g. https://cafe.example).
   // Optional: falls back to WEB_ORIGIN so dev/test need no extra config, but
   // production should set it explicitly to the URL customers scan.

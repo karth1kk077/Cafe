@@ -40,6 +40,7 @@ export const SOCKET_EVENTS = {
   ITEM_READY: "order_item.ready",
   ITEM_SERVED: "order_item.served",
   BILL_REQUESTED: "bill.requested",
+  SESSION_OPENED: "session.opened",
   SESSION_CLOSED: "session.closed",
   SESSION_REOPENED: "session.reopened",
   ASSISTANCE_REQUESTED: "assistance_request.created",

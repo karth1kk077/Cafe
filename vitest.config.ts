@@ -17,6 +17,11 @@ export default defineConfig({
       JWT_SECRET: "test-secret-at-least-16-chars-long",
       SESSION_SECRET: "test-session-secret-16-plus",
       COOKIE_SECURE: "false",
+      // The integration suite makes many requests from one IP in a single
+      // minute; production defaults stay untouched.
+      RATE_LIMIT_MAX: "10000",
+      ORDER_RATE_LIMIT_MAX: "10000",
+      SESSION_RATE_LIMIT_MAX: "10000",
     },
   },
 });

@@ -16,6 +16,7 @@ export const SOCKET_EVENTS = {
   ITEM_READY: "order_item.ready",
   ITEM_SERVED: "order_item.served",
   BILL_REQUESTED: "bill.requested",
+  SESSION_OPENED: "session.opened",
   SESSION_CLOSED: "session.closed",
   SESSION_REOPENED: "session.reopened",
   ASSISTANCE_REQUESTED: "assistance_request.created",
@@ -143,6 +144,12 @@ export function emitItemStatus(payload: Record<string, unknown>, sessionId?: str
 export function emitBillRequested(payload: unknown, sessionId?: string) {
   emitToSession(SOCKET_EVENTS.BILL_REQUESTED, payload, sessionId);
   emitToStaff(SOCKET_EVENTS.BILL_REQUESTED, payload, ["WAITER", "ADMIN"]);
+}
+
+/** A customer QR scan lazily opened a table session; staff refresh immediately. */
+export function emitSessionOpened(payload: unknown, sessionId?: string) {
+  emitToSession(SOCKET_EVENTS.SESSION_OPENED, payload, sessionId);
+  emitToStaff(SOCKET_EVENTS.SESSION_OPENED, payload, STAFF);
 }
 
 export function emitSessionClosed(payload: unknown, sessionId?: string) {

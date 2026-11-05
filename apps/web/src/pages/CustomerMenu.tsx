@@ -88,6 +88,8 @@ export function CustomerMenu() {
   }, [tableInfo?.sessionToken, tableCode, queryClient]);
 
   const canOrder = tableInfo?.canOrder;
+  const orderable = tableInfo?.orderable ?? false;
+  const canBrowseOrder = canOrder || orderable;
   const sessionStatus = tableInfo?.session?.status;
 
   const subtotal = useMemo(
@@ -95,9 +97,27 @@ export function CustomerMenu() {
     [cart]
   );
 
+  /**
+   * Open the table's session lazily (never on a bare scan) and return the
+   * signed token. A second phone at the same table receives the same session.
+   */
+  async function ensureSessionToken(): Promise<string> {
+    if (tableInfo?.sessionToken) return tableInfo.sessionToken;
+    const fresh = await api.post<TableResponse>(`/public/tables/${tableCode}/session`, {});
+    queryClient.setQueryData(["table", tableCode], fresh);
+    if (!fresh.sessionToken) {
+      throw new Error(
+        fresh.session?.status === "BILL_REQUESTED" || fresh.session?.status === "PAYMENT_PENDING"
+          ? "The bill has been requested for this table. Please ask a team member if you would like to order more."
+          : "Ordering is currently unavailable for this table. Please ask a team member for help."
+      );
+    }
+    return fresh.sessionToken;
+  }
+
   const orderMutation = useMutation({
     mutationFn: async (payload: unknown) => {
-      const token = tableInfo?.sessionToken ?? null;
+      const token = await ensureSessionToken();
       try {
         return await api.post("/public/orders", payload, token);
       } catch (e) {
@@ -130,15 +150,6 @@ export function CustomerMenu() {
         queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
       }
     },
-  });
-
-  const requestSession = useMutation({
-    mutationFn: () => api.post(`/public/tables/${tableCode}/start-session`, {}),
-    onSuccess: () => {
-      setOrderError(null);
-      queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
-    },
-    onError: (e: Error) => setOrderError(e.message),
   });
 
   function openCustomizer(item: PublicMenuResponse["categories"][0]["items"][0]) {
@@ -269,19 +280,12 @@ export function CustomerMenu() {
             <div className="mt-2 rounded-lg bg-orange-600/20 border border-orange-400/40 px-3 py-2 text-sm space-y-2">
               {sessionStatus === "PENDING" ? (
                 <div>Waiting for a waiter to confirm your table. You can browse the menu in the meantime.</div>
-              ) : tableInfo?.session ? (
-                <div>Ordering is closed for this table. Please see a waiter for the bill.</div>
+              ) : sessionStatus === "BILL_REQUESTED" || sessionStatus === "PAYMENT_PENDING" ? (
+                <div>Ordering is paused while your bill is being settled. Please ask a team member if you would like to order more.</div>
+              ) : !orderable ? (
+                <div>This table is not accepting orders right now. Please ask a team member for help.</div>
               ) : (
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <span>No active session at this table.</span>
-                  <button
-                    className="btn btn-accent !bg-orange-500 !text-white"
-                    disabled={requestSession.isPending}
-                    onClick={() => requestSession.mutate()}
-                  >
-                    {requestSession.isPending ? "Requesting…" : "Start ordering"}
-                  </button>
-                </div>
+                <div>Browse away — your table opens automatically when you place your first order.</div>
               )}
             </div>
           )}
@@ -341,7 +345,7 @@ export function CustomerMenu() {
                     </div>
                     {!item.isAvailable ? (
                       <span className="badge bg-slate-200 text-slate-600 mt-2">Unavailable</span>
-                    ) : canOrder ? (
+                    ) : canBrowseOrder ? (
                       <button
                         className="btn btn-primary mt-2 text-sm"
                         onClick={() =>
@@ -401,7 +405,7 @@ export function CustomerMenu() {
           <button
             className="btn btn-accent w-full mt-2"
             onClick={submitOrder}
-            disabled={orderMutation.isPending || !canOrder}
+            disabled={orderMutation.isPending || !canBrowseOrder}
           >
             {orderMutation.isPending ? "Placing order…" : `Place Order · ${formatMoney(subtotal)}`}
           </button>

@@ -127,12 +127,14 @@ export function WaiterPage() {
       refresh();
     };
     socket.on(SOCKET_EVENTS.ORDER_CREATED, refresh);
+    socket.on(SOCKET_EVENTS.SESSION_OPENED, refresh);
     socket.on(SOCKET_EVENTS.ITEM_READY, onItemReady);
     socket.on(SOCKET_EVENTS.ITEM_STATUS, refresh);
     socket.on(SOCKET_EVENTS.BILL_REQUESTED, refresh);
     socket.on(SOCKET_EVENTS.ASSISTANCE_REQUESTED, onAssistance);
     return () => {
       socket.off(SOCKET_EVENTS.ORDER_CREATED, refresh);
+      socket.off(SOCKET_EVENTS.SESSION_OPENED, refresh);
       socket.off(SOCKET_EVENTS.ITEM_READY, onItemReady);
       socket.off(SOCKET_EVENTS.ITEM_STATUS, refresh);
       socket.off(SOCKET_EVENTS.BILL_REQUESTED, refresh);
