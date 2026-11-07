@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -97,11 +97,16 @@ export function OrderTracking() {
     refetchInterval: (query) => (query.state.data?.bill.status === "PAID" ? false : 15000),
   });
 
+  // `refetch` is stable in TanStack Query, so pulling it out keeps refreshAll
+  // stable without depending on the whole query result object.
+  const { refetch: refetchOrders } = ordersQuery;
+  const { refetch: refetchBill } = billQuery;
+
   const refreshAll = useCallback(() => {
-    void ordersQuery.refetch();
-    void billQuery.refetch();
+    void refetchOrders();
+    void refetchBill();
     queryClient.invalidateQueries({ queryKey: ["table", tableCode] });
-  }, [ordersQuery.refetch, billQuery.refetch, queryClient, tableCode]);
+  }, [refetchOrders, refetchBill, queryClient, tableCode]);
 
   useEffect(() => {
     if (!token) return;
@@ -149,7 +154,9 @@ export function OrderTracking() {
     onError: (error: Error) => showToast(error.message, "error"),
   });
 
-  const orders = ordersQuery.data?.orders ?? [];
+  // Stable identity between polls: the status-diff effect below should only run
+  // when the order data actually changes, not on every render.
+  const orders = useMemo(() => ordersQuery.data?.orders ?? [], [ordersQuery.data]);
   const sessionStatus = ordersQuery.data?.session.status ?? tableInfo?.session?.status;
   const bill = billQuery.data;
 
