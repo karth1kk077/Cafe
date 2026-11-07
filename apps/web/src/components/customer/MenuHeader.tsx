@@ -47,6 +47,7 @@ export function MenuHeader({
         </div>
         <Link
           to={ordersHref}
+          aria-label="Orders & bill"
           className="btn btn-ghost !min-h-10 shrink-0 !border-white/20 !bg-white/10 !px-3 !text-white"
         >
           <ReceiptIcon size={16} />
