@@ -331,7 +331,7 @@ export function WaiterPage() {
                       <UtensilsIcon size={17} />
                     </span>
                     <div className="min-w-0">
-                      <div className="display font-bold leading-tight">Table {group.tableNumber}</div>
+                      <div className="display truncate font-bold leading-tight">Table {group.tableNumber}</div>
                       <div className="num truncate text-xs text-muted">{group.orderNumber}</div>
                     </div>
                   </div>
@@ -395,9 +395,9 @@ export function WaiterPage() {
                   onClick={() => setSelected(t)}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className="display text-lg font-bold leading-none">T{t.number}</div>
+                    <div className="display min-w-0 truncate text-lg font-bold leading-none">T{t.number}</div>
                     <span
-                      className={`badge ${
+                      className={`badge shrink-0 ${
                         session?.status === "PENDING"
                           ? "bg-amber-soft text-amber-ink"
                           : STATUS_COLOR[t.status] ?? "bg-cream text-muted"
@@ -441,7 +441,7 @@ export function WaiterPage() {
           >
             <div className="mb-3 flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 id="table-sheet-title" className="display text-lg font-bold leading-tight">
+                <h3 id="table-sheet-title" className="display truncate text-lg font-bold leading-tight">
                   Table {selected.number}
                 </h3>
                 <div className="mt-0.5 text-xs text-muted">Status: {selected.status}</div>
