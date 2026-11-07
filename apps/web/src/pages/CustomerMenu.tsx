@@ -167,10 +167,12 @@ export function CustomerMenu() {
   }, [categories]);
 
   useEffect(() => {
-    updateActiveCategory();
+    // Measure after layout so the first chip matches what is actually on screen.
+    const frame = window.requestAnimationFrame(updateActiveCategory);
     window.addEventListener("scroll", updateActiveCategory, { passive: true });
     window.addEventListener("resize", updateActiveCategory);
     return () => {
+      window.cancelAnimationFrame(frame);
       window.removeEventListener("scroll", updateActiveCategory);
       window.removeEventListener("resize", updateActiveCategory);
     };
