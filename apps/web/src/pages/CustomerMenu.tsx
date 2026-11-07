@@ -122,10 +122,12 @@ export function CustomerMenu() {
   // Keep the session token for the tracking screen. Never erase a stored token
   // just because the table has no active session — that token still authorises
   // read-only access to a recently closed bill.
+  const sessionToken = tableInfo?.sessionToken;
+  const trackedSessionId = tableInfo?.session?.id;
   useEffect(() => {
-    if (!tableInfo?.sessionToken || !tableInfo.session) return;
-    saveSession(tableCode, { token: tableInfo.sessionToken, sessionId: tableInfo.session.id });
-  }, [tableInfo?.sessionToken, tableInfo?.session?.id, tableCode]);
+    if (!sessionToken || !trackedSessionId) return;
+    saveSession(tableCode, { token: sessionToken, sessionId: trackedSessionId });
+  }, [sessionToken, trackedSessionId, tableCode]);
 
   useEffect(() => {
     const token = tableInfo?.sessionToken ?? loadSession(tableCode)?.token ?? undefined;
