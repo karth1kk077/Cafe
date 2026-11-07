@@ -175,7 +175,10 @@ export function OrderTracking() {
     }
     if (announcements.length) {
       haptic(HAPTIC_SUCCESS);
-      showToast(announcements[0], "success");
+      // Deferred a tick so the toast does not cascade a render inside the
+      // status-diff effect.
+      const timer = window.setTimeout(() => showToast(announcements[0], "success"), 0);
+      return () => window.clearTimeout(timer);
     }
   }, [orders, showToast]);
 
