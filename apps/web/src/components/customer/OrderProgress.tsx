@@ -1,4 +1,5 @@
 import type { SessionOrdersResponse } from "../../lib/api";
+import { CheckIcon } from "../ui/Icon";
 
 type TrackedOrder = SessionOrdersResponse["orders"][number];
 
@@ -42,18 +43,22 @@ export function OrderProgress({ order }: { order: TrackedOrder }) {
           return (
             <div key={step} className={`flex items-center ${index === STEPS.length - 1 ? "" : "flex-1"}`}>
               <span
-                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold ${
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold transition-colors duration-300 ${
                   complete
                     ? "border-forest bg-forest text-white"
                     : current
-                      ? "border-terracotta bg-terracotta text-white"
+                      ? "border-terracotta bg-terracotta text-white shadow-[0_0_0_3px_rgb(194_65_12/0.14)]"
                       : "border-line-strong bg-surface text-muted"
                 }`}
               >
-                {complete ? "✓" : index + 1}
+                {complete ? <CheckIcon size={12} strokeWidth={2.2} /> : index + 1}
               </span>
               {index < STEPS.length - 1 && (
-                <span className={`mx-1 h-0.5 flex-1 rounded-full ${index < stage ? "bg-forest" : "bg-line"}`} />
+                <span
+                  className={`mx-1 h-0.5 flex-1 rounded-full transition-colors duration-300 ${
+                    index < stage ? "bg-forest" : "bg-line"
+                  }`}
+                />
               )}
             </div>
           );

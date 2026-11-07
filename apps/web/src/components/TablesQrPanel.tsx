@@ -2,6 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { api } from "../lib/api";
+import {
+  AlertIcon,
+  CheckIcon,
+  CloseIcon,
+  CopyIcon,
+  DownloadIcon,
+  ExternalLinkIcon,
+  PlusIcon,
+  PrinterIcon,
+  QrCodeIcon,
+  RefreshIcon,
+  SearchIcon,
+} from "./ui/Icon";
 
 /** Row shape returned by GET /api/staff/admin/tables. */
 interface AdminTable {
@@ -460,41 +473,55 @@ export function TablesQrPanel() {
     <>
       <div className="print:hidden space-y-4">
         {error && (
-          <div className="flex items-center justify-between gap-3 rounded-lg bg-danger-soft text-danger px-3 py-2 text-sm">
-            <span>{error}</span>
+          <div
+            role="alert"
+            className="flex items-start justify-between gap-3 rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger"
+          >
+            <span className="flex items-start gap-2">
+              <AlertIcon size={16} className="mt-0.5 shrink-0" />
+              {error}
+            </span>
             <button
-              className="shrink-0 self-start rounded-md p-2 font-bold"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-danger/10"
               aria-label="Dismiss error"
               onClick={() => setError("")}
             >
-              ✕
+              <CloseIcon size={16} />
             </button>
           </div>
         )}
 
         {showLinkWarning && (
-          <div className="flex items-start justify-between gap-3 rounded-lg bg-amber-soft text-amber-ink px-3 py-2 text-sm">
-            <div>
-              <div className="font-semibold">Check the QR link before printing</div>
-              <p className="mt-0.5">
-                {warningIsLocalhost
-                  ? `These codes point to ${warningOrigin}. Phones on your Wi-Fi cannot open a localhost link — set PUBLIC_APP_BASE_URL to your LAN address or public HTTPS URL, then reload.`
-                  : `These codes use ${warningOrigin}. Some phone cameras and browsers warn about insecure http links — use an HTTPS public address before printing.`}
-              </p>
+          <div className="flex items-start justify-between gap-3 rounded-xl bg-amber-soft px-3 py-2 text-sm text-amber-ink">
+            <div className="flex items-start gap-2">
+              <AlertIcon size={16} className="mt-0.5 shrink-0" />
+              <div>
+                <div className="font-semibold">Check the QR link before printing</div>
+                <p className="mt-0.5">
+                  {warningIsLocalhost
+                    ? `These codes point to ${warningOrigin}. Phones on your Wi-Fi cannot open a localhost link — set PUBLIC_APP_BASE_URL to your LAN address or public HTTPS URL, then reload.`
+                    : `These codes use ${warningOrigin}. Some phone cameras and browsers warn about insecure http links — use an HTTPS public address before printing.`}
+                </p>
+              </div>
             </div>
             <button
-              className="shrink-0 self-start rounded-md p-2 font-bold"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-amber-ink/10"
               aria-label="Dismiss QR link warning"
               onClick={() => setWarningDismissed(true)}
             >
-              ✕
+              <CloseIcon size={16} />
             </button>
           </div>
         )}
 
         {/* Add table */}
-        <div className="card p-3 space-y-2">
-          <div className="font-semibold">Add table</div>
+        <div className="card space-y-2 p-4">
+          <div className="flex items-center gap-2 font-semibold">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-cream-deep text-espresso">
+              <PlusIcon size={16} />
+            </span>
+            Add table
+          </div>
           <div className="grid gap-2 sm:grid-cols-3">
             <input
               className="input"
@@ -518,6 +545,7 @@ export function TablesQrPanel() {
               disabled={createTable.isPending}
               onClick={() => createTable.mutate()}
             >
+              <PlusIcon size={15} />
               {createTable.isPending ? "Adding…" : "Add table"}
             </button>
           </div>
@@ -528,14 +556,20 @@ export function TablesQrPanel() {
         </div>
 
         {/* Search + filter */}
-        <div className="flex flex-wrap gap-2 items-center">
-          <input
-            className="input max-w-xs"
-            placeholder="Search table number…"
-            aria-label="Search tables"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[12rem] max-w-xs flex-1">
+            <SearchIcon
+              size={16}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
+            />
+            <input
+              className="input !pl-9"
+              placeholder="Search table number…"
+              aria-label="Search tables"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
           <select
             className="input max-w-40"
             aria-label="Filter by status"
@@ -551,6 +585,7 @@ export function TablesQrPanel() {
             disabled={printable.length === 0}
             onClick={startPrintAll}
           >
+            <PrinterIcon size={15} />
             Print active QR codes ({printable.length})
           </button>
         </div>
@@ -559,22 +594,30 @@ export function TablesQrPanel() {
         </div>
 
         {tablesQuery.isPending && (
-          <div className="card p-4 text-sm text-muted">Loading tables…</div>
+          <div className="card flex items-center gap-2 p-4 text-sm text-muted">
+            <RefreshIcon size={15} className="animate-spin" />
+            Loading tables…
+          </div>
         )}
 
         {tablesQuery.isError && (
-          <div className="card p-4 flex flex-wrap items-center justify-between gap-3">
-            <span className="text-sm text-danger">
+          <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
+            <span className="flex items-start gap-2 text-sm text-danger">
+              <AlertIcon size={16} className="mt-0.5 shrink-0" />
               {errText(tablesQuery.error, "Could not load tables.")}
             </span>
             <button className="btn btn-ghost" onClick={() => tablesQuery.refetch()}>
+              <RefreshIcon size={15} />
               Retry
             </button>
           </div>
         )}
 
         {!tablesQuery.isPending && !tablesQuery.isError && tables.length === 0 && (
-          <div className="card p-6 text-center space-y-2">
+          <div className="card space-y-2 p-6 text-center">
+            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-cream-deep text-espresso">
+              <QrCodeIcon size={22} />
+            </span>
             <div className="font-semibold">No tables yet</div>
             <div className="text-sm text-muted">
               Add your first table above to generate its QR code.
@@ -606,7 +649,7 @@ export function TablesQrPanel() {
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-muted mt-1">
+                    <div className="mt-1 text-xs text-muted">
                       {t.seats} seats · QR ready · updated{" "}
                       {new Date(t.updatedAt).toLocaleDateString()}
                     </div>
@@ -619,6 +662,7 @@ export function TablesQrPanel() {
                         setPreviewId(previewId === t.id ? null : t.id);
                       }}
                     >
+                      <QrCodeIcon size={14} />
                       {previewId === t.id ? "Hide QR" : "View QR"}
                     </button>
                     <a
@@ -627,9 +671,11 @@ export function TablesQrPanel() {
                       target="_blank"
                       rel="noreferrer"
                     >
-                      Test scan ↗
+                      <ExternalLinkIcon size={14} />
+                      Test scan
                     </a>
                     <button className="btn btn-ghost btn-sm" onClick={() => copyLink(t)}>
+                      {copiedId === t.id ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
                       {copiedId === t.id ? "Copied!" : "Copy link"}
                     </button>
                     <button
@@ -694,26 +740,34 @@ export function TablesQrPanel() {
               </div>
             ))}
             {filtered.length === 0 && (
-              <div className="p-4 text-sm text-muted">No tables match your search.</div>
+              <div className="flex items-center gap-2 p-4 text-sm text-muted">
+                <SearchIcon size={15} />
+                No tables match your search.
+              </div>
             )}
           </div>
         )}
 
         {/* QR preview */}
         {preview && (
-          <div className="card p-4 space-y-3">
+          <div className="card animate-rise space-y-3 p-4">
             <div className="flex items-center justify-between gap-3">
-              <div className="font-semibold">QR code · Table {preview.number}</div>
+              <div className="flex min-w-0 items-center gap-2 font-semibold">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-cream-deep text-espresso">
+                  <QrCodeIcon size={16} />
+                </span>
+                <span className="truncate">QR code · Table {preview.number}</span>
+              </div>
               <button
-                className="btn btn-ghost btn-sm"
+                className="btn btn-ghost btn-icon shrink-0"
                 aria-label="Close QR preview"
                 onClick={() => setPreviewId(null)}
               >
-                ✕
+                <CloseIcon size={18} />
               </button>
             </div>
-            <div className="flex flex-col sm:flex-row gap-4 items-start">
-              <div className="rounded-xl border border-line bg-white p-3 self-start shrink-0">
+            <div className="flex flex-col items-start gap-4 sm:flex-row">
+              <div className="shrink-0 self-start rounded-xl border border-line bg-white p-3 shadow-soft">
                 {qrPng ? (
                   <img
                     src={qrPng}
@@ -737,9 +791,12 @@ export function TablesQrPanel() {
                 </div>
                 <div className="text-muted">{INSTRUCTION}</div>
                 {isInsecureQrUrl(preview.qrUrl) && (
-                  <div className="rounded-lg bg-amber-soft text-amber-ink px-2 py-1 text-xs">
-                    This link may not open on a phone. Set PUBLIC_APP_BASE_URL to a public HTTPS
-                    address before printing.
+                  <div className="flex items-start gap-2 rounded-lg bg-amber-soft px-2 py-1 text-xs text-amber-ink">
+                    <AlertIcon size={14} className="mt-0.5 shrink-0" />
+                    <span>
+                      This link may not open on a phone. Set PUBLIC_APP_BASE_URL to a public HTTPS
+                      address before printing.
+                    </span>
                   </div>
                 )}
                 <div className="flex flex-wrap gap-2">
@@ -751,6 +808,7 @@ export function TablesQrPanel() {
                         .catch((e) => setError(errText(e, "Could not build the PNG.")))
                     }
                   >
+                    <DownloadIcon size={14} />
                     Download PNG
                   </button>
                   <button
@@ -761,9 +819,11 @@ export function TablesQrPanel() {
                       )
                     }
                   >
+                    <DownloadIcon size={14} />
                     Download SVG
                   </button>
                   <button className="btn btn-ghost btn-sm" onClick={() => copyLink(preview)}>
+                    {copiedId === preview.id ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
                     {copiedId === preview.id ? "Copied!" : "Copy link"}
                   </button>
                   <a
@@ -772,15 +832,18 @@ export function TablesQrPanel() {
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Test scan ↗
+                    <ExternalLinkIcon size={14} />
+                    Test scan
                   </a>
                   <button className="btn btn-ghost btn-sm" onClick={() => startPrint(preview)}>
+                    <PrinterIcon size={14} />
                     Print
                   </button>
                   <button
                     className="btn btn-ghost btn-sm text-danger"
                     onClick={() => rotateQr(preview)}
                   >
+                    <RefreshIcon size={14} />
                     Rotate QR
                   </button>
                 </div>

@@ -14,6 +14,15 @@ import { haptic, HAPTIC_SUCCESS } from "../lib/haptics";
 import { BillCard } from "../components/customer/BillCard";
 import { OrderCard } from "../components/customer/OrderCard";
 import { Toast, type ToastMessage, type ToastTone } from "../components/customer/Toast";
+import {
+  AlertIcon,
+  BrandCupIcon,
+  ClockIcon,
+  ConciergeBellIcon,
+  MenuBookIcon,
+  ReceiptIcon,
+  RefreshIcon,
+} from "../components/ui/Icon";
 
 function TrackingSkeleton() {
   return (
@@ -180,33 +189,47 @@ export function OrderTracking() {
 
   return (
     <div className="min-h-screen bg-cream pb-28">
-      <header className="sticky top-0 z-20 flex items-center justify-between gap-3 bg-espresso px-4 pb-3 pt-safe text-white">
-        <div className="min-w-0">
-          <div className="text-xs font-medium uppercase tracking-[0.14em] text-white/60">
-            Table {tableInfo?.table.number ?? "…"}
+      <header className="topbar sticky top-0 z-20 px-4 pb-3 pt-safe">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="brand-mark brand-mark-sm">
+              <BrandCupIcon size={18} />
+            </span>
+            <div className="min-w-0">
+              <h1 className="display truncate text-xl font-semibold leading-tight">Your order</h1>
+              <span className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[0.64rem] font-semibold uppercase tracking-[0.14em] text-white/70">
+                Table {tableInfo?.table.number ?? "…"}
+              </span>
+            </div>
           </div>
-          <h1 className="display truncate text-xl font-semibold">Your order</h1>
-        </div>
-        <div className="flex shrink-0 gap-2">
-          <button
-            type="button"
-            className="btn btn-ghost !min-h-10 !border-white/25 !bg-white/10 !px-3 !text-white"
-            aria-label="Refresh order"
-            onClick={refreshAll}
-          >
-            ↻
-          </button>
-          <Link to={`/t/${tableCode}`} className="btn btn-ghost !min-h-10 !border-white/25 !bg-white/10 !px-3 !text-white text-sm">
-            Menu
-          </Link>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon !min-h-10 !border-white/20 !bg-white/10 !text-white"
+              aria-label="Refresh order"
+              onClick={refreshAll}
+            >
+              <RefreshIcon size={17} />
+            </button>
+            <Link
+              to={`/t/${tableCode}`}
+              className="btn btn-ghost !min-h-10 !border-white/20 !bg-white/10 !px-3 !text-white text-sm"
+            >
+              <MenuBookIcon size={16} />
+              Menu
+            </Link>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-2xl space-y-3 p-3">
-        <section className="card flex items-center justify-between gap-3 p-4">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted">Status</div>
-            <div className="display text-lg font-semibold">
+        <section className="card flex items-center gap-3 p-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-cream-deep text-copper ring-1 ring-line">
+            <ClockIcon size={20} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[0.66rem] font-bold uppercase tracking-[0.14em] text-muted">Status</div>
+            <div className="display text-lg font-semibold leading-tight">
               {sessionStatus ? STATUS_COPY[sessionStatus] ?? sessionStatus.replace("_", " ") : "No open session"}
             </div>
             <p className="mt-0.5 text-sm text-muted">
@@ -217,17 +240,25 @@ export function OrderTracking() {
                   : "Place an order from the menu to get started."}
             </p>
           </div>
-          <span className="badge bg-cream text-espresso">{orders.length} {orders.length === 1 ? "order" : "orders"}</span>
+          <span className="badge badge-plain shrink-0 bg-cream text-espresso">
+            {orders.length} {orders.length === 1 ? "order" : "orders"}
+          </span>
         </section>
 
         {ordersQuery.isLoading && <TrackingSkeleton />}
 
         {ordersQuery.error && (
           <div className="card p-4 text-sm" role="alert">
-            <p className="font-semibold">We couldn’t load your orders.</p>
-            <p className="mt-1 text-muted">{ordersQuery.error.message}</p>
+            <div className="flex items-start gap-2">
+              <AlertIcon size={17} className="mt-0.5 shrink-0 text-danger" />
+              <div>
+                <p className="font-semibold">We couldn’t load your orders.</p>
+                <p className="mt-1 text-muted">{ordersQuery.error.message}</p>
+              </div>
+            </div>
             <div className="mt-3 flex gap-2">
               <button type="button" className="btn btn-ghost" onClick={refreshAll}>
+                <RefreshIcon size={15} />
                 Try again
               </button>
               <Link to={`/t/${tableCode}`} className="btn btn-primary">
@@ -239,6 +270,9 @@ export function OrderTracking() {
 
         {!ordersQuery.isLoading && !orders.length && !bill && !ordersQuery.error && (
           <div className="card p-8 text-center">
+            <span className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full bg-cream-deep text-copper/70">
+              <MenuBookIcon size={26} />
+            </span>
             <p className="display text-lg font-semibold">Nothing ordered yet</p>
             <p className="mt-1 text-sm text-muted">Head back to the menu and add something you like.</p>
             <Link to={`/t/${tableCode}`} className="btn btn-accent mt-4">
@@ -263,13 +297,14 @@ export function OrderTracking() {
       </main>
 
       {sessionStatus === "ACTIVE" && (
-        <div className="fixed inset-x-0 bottom-0 z-30 flex gap-2 border-t border-line bg-surface p-3 pb-safe">
+        <div className="fixed inset-x-0 bottom-0 z-30 flex gap-2 border-t border-line bg-surface p-3 pb-safe shadow-[0_-10px_30px_-24px_rgb(43_29_20/0.5)]">
           <button
             type="button"
             className="btn btn-ghost flex-1"
             onClick={() => assistance.mutate()}
             disabled={assistance.isPending}
           >
+            <ConciergeBellIcon size={16} />
             {assistance.isPending ? "Calling…" : "Call waiter"}
           </button>
           <button
@@ -278,18 +313,21 @@ export function OrderTracking() {
             onClick={() => requestBill.mutate()}
             disabled={requestBill.isPending}
           >
+            <ReceiptIcon size={16} />
             {requestBill.isPending ? "Requesting…" : "Request bill"}
           </button>
         </div>
       )}
 
       {sessionStatus === "BILL_REQUESTED" && (
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-amber-soft p-3 pb-safe text-center text-sm font-semibold text-amber-ink">
+        <div className="fixed inset-x-0 bottom-0 z-30 flex items-center justify-center gap-2 border-t border-line bg-amber-soft p-3 pb-safe text-center text-sm font-semibold text-amber-ink">
+          <AlertIcon size={16} />
           Bill requested. A team member will be with you shortly.
         </div>
       )}
       {sessionStatus === "PAYMENT_PENDING" && (
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-amber-soft p-3 pb-safe text-center text-sm font-semibold text-amber-ink">
+        <div className="fixed inset-x-0 bottom-0 z-30 flex items-center justify-center gap-2 border-t border-line bg-amber-soft p-3 pb-safe text-center text-sm font-semibold text-amber-ink">
+          <ClockIcon size={16} />
           Payment in progress. Please wait for a team member to confirm.
         </div>
       )}

@@ -3,6 +3,16 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, formatMoney, type OrderItemStatus, type OrderStatus } from "../lib/api";
 import { SOCKET_EVENTS, getSocket } from "../lib/socket";
 import { useAuth } from "../lib/auth";
+import {
+  BellIcon,
+  BellOffIcon,
+  CheckCircleIcon,
+  CheckIcon,
+  ClockIcon,
+  LogOutIcon,
+  RefreshIcon,
+  UtensilsIcon,
+} from "../components/ui/Icon";
 
 interface KitchenOrder {
   id: string;
@@ -167,15 +177,21 @@ export function KitchenPage() {
       {/* Header + filter bar stick together so they never overlap, whatever
           the header's height ends up being. */}
       <div className="sticky top-0 z-20">
-        <header className="bg-espresso text-white px-4 pb-3 pt-safe">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="display text-lg font-bold">Kitchen</div>
-              <div className="text-xs opacity-70">{user?.name}</div>
+        <header className="topbar px-4 pb-3 pt-safe">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="brand-mark brand-mark-sm">
+                <UtensilsIcon size={18} />
+              </span>
+              <div className="min-w-0">
+                <div className="display text-lg font-bold leading-tight">Kitchen</div>
+                <div className="truncate text-xs text-white/60">{user?.name}</div>
+              </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex shrink-0 gap-2">
               {!soundReady ? (
                 <button className="btn btn-accent text-xs" onClick={enableSound}>
+                  <BellIcon size={15} />
                   Enable sound
                 </button>
               ) : (
@@ -183,17 +199,22 @@ export function KitchenPage() {
                   className={`chip ${soundOn ? "!bg-forest text-white" : "bg-white/10 text-white/70"}`}
                   onClick={() => setSoundOn((s) => !s)}
                 >
-                  🔔 {soundOn ? "On" : "Off"}
+                  {soundOn ? <BellIcon size={14} /> : <BellOffIcon size={14} />}
+                  {soundOn ? "On" : "Off"}
                 </button>
               )}
-              <button className="btn btn-ghost !text-white !border-white/30 text-sm" onClick={() => { logout(); location.href = "/login"; }}>
-                Exit
+              <button
+                className="btn btn-ghost btn-icon !min-h-10 !border-white/20 !bg-white/10 !text-white"
+                aria-label="Sign out"
+                onClick={() => { logout(); location.href = "/login"; }}
+              >
+                <LogOutIcon size={17} />
               </button>
             </div>
           </div>
         </header>
 
-        <nav className="flex gap-2 overflow-x-auto bg-surface border-b border-line px-3 py-2">
+        <nav className="flex items-center gap-2 overflow-x-auto border-b border-line bg-surface/95 px-3 py-2">
           {FILTERS.map((f) => (
             <button
               key={f.key}
@@ -203,32 +224,47 @@ export function KitchenPage() {
               {f.label}
             </button>
           ))}
-          <button className="btn btn-ghost text-xs" onClick={() => refetch()}>↻ Refresh</button>
+          <button className="btn btn-ghost btn-sm ml-auto shrink-0" aria-label="Refresh orders" onClick={() => refetch()}>
+            <RefreshIcon size={15} />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
         </nav>
       </div>
 
-      <main className="p-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {!orders.length && <div className="p-8 text-center text-muted col-span-full">No dishes in this view.</div>}
+      <main className="grid gap-3 p-3 sm:grid-cols-2 lg:grid-cols-3">
+        {!orders.length && (
+          <div className="card col-span-full p-10 text-center">
+            <span className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full bg-cream-deep text-copper/70">
+              <UtensilsIcon size={26} />
+            </span>
+            <p className="display text-lg font-semibold">No dishes in this view</p>
+            <p className="mt-1 text-sm text-muted">New orders will appear here as they arrive.</p>
+          </div>
+        )}
         {orders.map((o) => {
           const mins = minutesSince(o.createdAt);
           return (
-            <div key={o.id} className="card border-l-4 border-l-line-strong p-3">
-              <div className="flex justify-between items-start">
+            <div key={o.id} className="card p-3">
+              <div className="flex justify-between items-start gap-2">
                 <div>
                   <div className="display text-xl font-bold">Table {o.table.number}</div>
                   <div className="text-xs text-muted">{o.orderNumber}</div>
                 </div>
                 <div className="text-right">
-                  <span className={`badge ${mins > 10 ? "!bg-danger-soft text-danger" : "bg-cream text-espresso"}`}>{mins}m</span>
-                  <div className="text-xs text-muted mt-1">{o.status}</div>
+                  <span className={`badge badge-plain ${mins > 10 ? "bg-danger-soft text-danger" : "bg-cream text-espresso"}`}>
+                    <ClockIcon size={11} />
+                    {mins}m
+                  </span>
+                  <div className="mt-1 text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-muted">{o.status}</div>
                 </div>
               </div>
               {o.items.some((it) => it.status === "PREPARING") && (
                 <button
-                  className="btn btn-ghost text-xs mt-1"
+                  className="btn btn-ghost btn-sm mt-2 w-full"
                   disabled={bulkReady.isPending}
                   onClick={() => bulkReady.mutate(o.items)}
                 >
+                  <CheckIcon size={14} />
                   Mark all items for this order ready
                 </button>
               )}
@@ -242,36 +278,46 @@ export function KitchenPage() {
                           <span className="text-muted"> + {it.addons.map((a) => a.nameSnapshot).join(", ")}</span>
                         )}
                         {it.specialInstructions && (
-                          <div className="text-amber-ink text-xs mt-0.5">✎ {it.specialInstructions}</div>
+                          <div className="mt-0.5 text-xs text-amber-ink">{it.specialInstructions}</div>
                         )}
                       </div>
                       <span className={`badge whitespace-nowrap ${ITEM_STYLE[it.status]}`}>{it.status}</span>
                     </div>
-                    <div className="flex gap-2 mt-1.5">
+                    <div className="mt-1.5 flex gap-2">
                       {it.status === "QUEUED" && (
                         <button
-                          className="btn btn-accent text-xs !py-2"
+                          className="btn btn-accent btn-sm"
                           disabled={setItemStatus.isPending}
                           onClick={() => setItemStatus.mutate({ itemId: it.id, status: "PREPARING" })}
                         >
+                          <UtensilsIcon size={14} />
                           Start preparing
                         </button>
                       )}
                       {it.status === "PREPARING" && (
                         <button
-                          className="btn btn-primary text-xs !py-2 !bg-forest"
+                          className="btn btn-primary btn-sm !bg-forest"
                           disabled={setItemStatus.isPending}
                           onClick={() => setItemStatus.mutate({ itemId: it.id, status: "READY" })}
                         >
+                          <CheckIcon size={14} />
                           Mark ready
                         </button>
                       )}
-                      {it.status === "READY" && <span className="text-xs text-forest font-semibold">✓ Waiting for pickup</span>}
+                      {it.status === "READY" && (
+                        <span className="flex items-center gap-1.5 text-xs font-semibold text-forest">
+                          <CheckCircleIcon size={14} />
+                          Waiting for pickup
+                        </span>
+                      )}
                     </div>
                   </li>
                 ))}
               </ul>
-              <div className="text-xs text-muted mt-2">Order total <span className="num">{formatMoney(o.totalMinor)}</span></div>
+              <div className="mt-2 flex items-center justify-between border-t border-line pt-2 text-xs text-muted">
+                <span>Order total</span>
+                <span className="num font-semibold text-espresso">{formatMoney(o.totalMinor)}</span>
+              </div>
             </div>
           );
         })}

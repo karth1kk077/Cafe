@@ -3,6 +3,7 @@ import { formatMoney, type PublicMenuItem } from "../../lib/api";
 import { haptic } from "../../lib/haptics";
 import type { StoredCartLine } from "../../lib/session";
 import { BottomSheet } from "./BottomSheet";
+import { CheckIcon, MinusIcon, PlusIcon } from "../ui/Icon";
 
 /**
  * Size / add-on / note picker. Owns only the draft; the page owns the cart.
@@ -61,29 +62,29 @@ export function ItemSheet({
       title={item.name}
       footer={
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 rounded-control border border-line p-1">
+          <div className="flex items-center gap-1 rounded-control border border-line bg-cream/60 p-1">
             <button
               type="button"
-              className="btn btn-ghost !min-h-10 !border-0 !px-3"
+              className="btn btn-ghost btn-icon !min-h-10 !border-0 !bg-transparent !px-2.5"
               aria-label="Decrease quantity"
               onClick={() => {
                 haptic(8);
                 setQuantity((value) => Math.max(1, value - 1));
               }}
             >
-              −
+              <MinusIcon size={16} />
             </button>
             <span className="num min-w-6 text-center font-bold">{quantity}</span>
             <button
               type="button"
-              className="btn btn-ghost !min-h-10 !border-0 !px-3"
+              className="btn btn-ghost btn-icon !min-h-10 !border-0 !bg-transparent !px-2.5"
               aria-label="Increase quantity"
               onClick={() => {
                 haptic(8);
                 setQuantity((value) => value + 1);
               }}
             >
-              +
+              <PlusIcon size={16} />
             </button>
           </div>
           <button type="button" className="btn btn-accent flex-1" onClick={add}>
@@ -115,6 +116,7 @@ export function ItemSheet({
                       setVariantId(option.id);
                     }}
                   >
+                    {selected && <CheckIcon size={13} />}
                     {option.name}
                     {option.priceDeltaMinor !== 0 && (
                       <span className="num ml-1 font-normal">
@@ -145,6 +147,7 @@ export function ItemSheet({
                     className={`chip ${selected ? "!bg-espresso text-white" : "bg-cream text-espresso"}`}
                     onClick={() => toggleAddon(addon.id)}
                   >
+                    {selected && <CheckIcon size={13} />}
                     {addon.name}
                     <span className="num ml-1 font-normal">+{formatMoney(addon.priceMinor)}</span>
                   </button>

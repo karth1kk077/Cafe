@@ -11,32 +11,42 @@
 /*
  * Café design tokens (Tailwind v4 `@theme`). Every screen — customer and staff —
  * inherits these, so brand changes happen in one place.
+ *
+ * The theme is "warm paper": cream stock, espresso ink, terracotta accents and
+ * a faint coffee-ring motif on dark surfaces. Depth comes from warm layered
+ * shadows, never from flat grey.
  */
 @theme {
   --color-cream: #faf6f0;
-  --color-surface: #ffffff;
+  --color-cream-deep: #f2e9dd;
+  --color-sand: #efe2d1;
+  --color-surface: #fffdfa;
+  --color-surface-raised: #ffffff;
   --color-espresso: #2b1d14;
-  --color-muted: #7a6a5d;
+  --color-espresso-deep: #1d120c;
+  --color-muted: #75655a;
   --color-terracotta: #c2410c;
   --color-terracotta-dark: #9a3412;
+  --color-copper: #b45309;
   --color-forest: #2f6b4f;
   --color-forest-soft: #e7f1ea;
   --color-line: #eadfd3;
-  --color-line-strong: #dccbb9;
+  --color-line-strong: #d9c7b4;
   --color-danger: #b42318;
   --color-danger-soft: #fef3f2;
   --color-amber-soft: #fdf1dd;
-  --color-amber-ink: #92400e;
+  --color-amber-ink: #8a3d0b;
 
   --font-display: "Fraunces", ui-serif, Georgia, "Times New Roman", serif;
   --font-sans: "DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   --radius-card: 1.125rem;
-  --radius-sheet: 1.25rem;
+  --radius-sheet: 1.35rem;
   --radius-control: 0.875rem;
 
-  --shadow-soft: 0 1px 2px rgb(43 29 20 / 0.04), 0 10px 30px -18px rgb(43 29 20 / 0.28);
-  --shadow-lift: 0 2px 4px rgb(43 29 20 / 0.06), 0 18px 40px -20px rgb(43 29 20 / 0.35);
+  --shadow-soft: 0 1px 2px rgb(43 29 20 / 0.04), 0 14px 30px -22px rgb(43 29 20 / 0.38);
+  --shadow-lift: 0 2px 6px rgb(43 29 20 / 0.07), 0 26px 52px -26px rgb(43 29 20 / 0.46);
+  --shadow-inset: inset 0 1px 0 rgb(255 255 255 / 0.1);
 
   --ease-cafe: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -44,6 +54,9 @@
 :root {
   color-scheme: light;
   --cafe-header-h: 3.75rem;
+  /* Fine paper grain, inlined so it costs no request. Kept at very low alpha:
+     it should be felt at arm's length, never seen as a pattern. */
+  --cafe-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.32'/%3E%3C/svg%3E");
 }
 
 html {
@@ -53,13 +66,47 @@ html {
 body {
   margin: 0;
   font-family: var(--font-sans);
-  background: var(--color-cream);
+  background-color: var(--color-cream);
+  background-image:
+    radial-gradient(1100px 560px at 50% -12%, #fffaf2 0%, transparent 62%),
+    radial-gradient(760px 460px at 104% -4%, rgb(194 65 12 / 0.055), transparent 58%),
+    var(--cafe-grain);
+  background-repeat: no-repeat, no-repeat, repeat;
+  background-size: auto, auto, 180px 180px;
   color: var(--color-espresso);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   /* Removes the legacy 300ms tap delay without disabling pinch-zoom. */
   touch-action: manipulation;
+}
+
+/* ---- Browser surfaces belong to the design too ---- */
+::selection {
+  background: rgb(194 65 12 / 0.22);
+  color: var(--color-espresso-deep);
+}
+html {
+  caret-color: var(--color-terracotta);
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border: 3px solid var(--color-cream);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c4ae98;
 }
 
 /* Prices and quantities never jitter as digits change. */
@@ -75,7 +122,57 @@ h3,
 .display {
   font-family: var(--font-display);
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+/* ---- Dark surfaces: espresso with a faint coffee ring and grain ---- */
+
+.topbar,
+.hero-ink {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background-color: var(--color-espresso);
+  background-image:
+    radial-gradient(130% 150% at 0% 0%, rgb(194 65 12 / 0.28), transparent 48%),
+    radial-gradient(90% 120% at 100% 0%, rgb(255 236 214 / 0.1), transparent 52%),
+    linear-gradient(158deg, #35251a 0%, #251811 58%, #1e130d 100%);
+  color: #fff;
+}
+/* The ring: an oversized, near-invisible coffee stain bleeding off the corner. */
+.topbar::before,
+.hero-ink::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  right: -3.5rem;
+  top: -5.5rem;
+  width: 15rem;
+  height: 15rem;
+  border-radius: 9999px;
+  border: 1.35rem solid rgb(255 255 255 / 0.028);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.05),
+    0 0 0 1px rgb(255 255 255 / 0.04);
+  pointer-events: none;
+}
+.topbar::after,
+.hero-ink::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--cafe-grain);
+  background-size: 180px 180px;
+  opacity: 0.5;
+  mix-blend-mode: soft-light;
+  pointer-events: none;
+}
+.topbar > *,
+.hero-ink > * {
+  position: relative;
+  z-index: 1;
 }
 
 /* ---- Shared component classes (restyled from tokens) ---- */
@@ -92,6 +189,7 @@ h3,
   transition:
     background-color 180ms var(--ease-cafe),
     border-color 180ms var(--ease-cafe),
+    box-shadow 180ms var(--ease-cafe),
     color 180ms var(--ease-cafe),
     transform 120ms var(--ease-cafe),
     opacity 180ms var(--ease-cafe);
@@ -112,30 +210,24 @@ a:focus-visible {
   outline-offset: 2px;
 }
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
+  box-shadow: none;
 }
 .btn-primary {
-  background: var(--color-espresso);
+  background: linear-gradient(180deg, #3d2a1d 0%, #2b1d14 55%, #241710 100%);
   color: #fff;
-}
-.btn-primary:active:not(:disabled) {
-  background: #1f140e;
+  box-shadow: var(--shadow-inset), 0 10px 20px -14px rgb(43 29 20 / 0.7);
 }
 .btn-accent {
-  background: var(--color-terracotta);
+  background: linear-gradient(180deg, #cc4d15 0%, #c2410c 52%, #ad3a09 100%);
   color: #fff;
-}
-.btn-accent:active:not(:disabled) {
-  background: var(--color-terracotta-dark);
+  box-shadow: var(--shadow-inset), 0 10px 20px -14px rgb(154 52 18 / 0.75);
 }
 .btn-ghost {
-  background: var(--color-surface);
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
   border: 1px solid var(--color-line);
   color: var(--color-espresso);
-}
-.btn-ghost:active:not(:disabled) {
-  background: var(--color-cream);
 }
 /* Compact variant for dense list rows; must follow .btn to win the cascade. */
 .btn-sm {
@@ -143,6 +235,29 @@ a:focus-visible {
   font-size: 0.85rem;
   border-radius: 0.7rem;
   min-height: 2.5rem;
+}
+.btn-icon {
+  padding-inline: 0.7rem;
+  min-width: 2.75rem;
+}
+
+@media (hover: hover) {
+  .btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(180deg, #4a3425 0%, #332319 55%, #291a12 100%);
+  }
+  .btn-accent:hover:not(:disabled) {
+    background: linear-gradient(180deg, #d65a20 0%, #cb470f 52%, #b53d0a 100%);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--color-cream);
+    border-color: var(--color-line-strong);
+  }
+  .btn:active:not(:disabled) {
+    transform: translateY(0) scale(0.985);
+  }
 }
 
 .input {
@@ -152,30 +267,72 @@ a:focus-visible {
   padding: 0.65rem 0.9rem;
   /* 16px keeps iOS Safari from auto-zooming when a field is focused. */
   font-size: 1rem;
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   color: var(--color-espresso);
   min-height: 2.75rem;
-  transition: border-color 180ms var(--ease-cafe), box-shadow 180ms var(--ease-cafe);
+  transition:
+    border-color 180ms var(--ease-cafe),
+    box-shadow 180ms var(--ease-cafe),
+    background-color 180ms var(--ease-cafe);
 }
 .input::placeholder {
-  color: color-mix(in srgb, var(--color-muted) 75%, white);
+  color: color-mix(in srgb, var(--color-muted) 78%, white);
+}
+.input:hover {
+  border-color: var(--color-line-strong);
 }
 .input:focus {
   outline: none;
   border-color: var(--color-terracotta);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-terracotta) 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-terracotta) 16%, transparent);
+}
+/* Dark header fields: tinted from the surface, never greyed out. */
+.input-ink {
+  background: rgb(255 255 255 / 0.09);
+  border-color: rgb(255 255 255 / 0.22);
+  color: #fff;
+}
+.input-ink::placeholder {
+  color: rgb(255 255 255 / 0.62);
+}
+.input-ink:hover {
+  border-color: rgb(255 255 255 / 0.34);
+}
+.input-ink:focus {
+  border-color: rgb(255 214 186 / 0.75);
+  box-shadow: 0 0 0 3px rgb(255 214 186 / 0.16);
 }
 
 .card {
-  background: var(--color-surface);
+  position: relative;
+  background: linear-gradient(180deg, #fffefc 0%, var(--color-surface) 100%);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-soft);
+}
+.card-interactive {
+  transition:
+    transform 220ms var(--ease-cafe),
+    box-shadow 220ms var(--ease-cafe),
+    border-color 220ms var(--ease-cafe);
+  text-align: left;
+  width: 100%;
+}
+@media (hover: hover) {
+  .card-interactive:hover {
+    transform: translateY(-2px);
+    border-color: var(--color-line-strong);
+    box-shadow: var(--shadow-lift);
+  }
+}
+.card-interactive:active {
+  transform: translateY(0) scale(0.995);
 }
 
 .badge {
   display: inline-flex;
   align-items: center;
+  gap: 0.28rem;
   border-radius: 9999px;
   padding: 0.18rem 0.6rem;
   font-size: 0.7rem;
@@ -183,6 +340,20 @@ a:focus-visible {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+.badge::before {
+  content: "";
+  width: 0.34rem;
+  height: 0.34rem;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+/* Static labels that are not a status (counts, tags) opt out of the dot. */
+.badge-plain::before {
+  display: none;
 }
 
 /* Interactive filter/selector chip: same look as .badge but with a touchable
@@ -191,6 +362,7 @@ a:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 0.35rem;
   border-radius: 9999px;
   padding: 0.55rem 0.95rem;
   min-height: 2.75rem;
@@ -204,11 +376,66 @@ a:focus-visible {
     background-color 180ms var(--ease-cafe),
     color 180ms var(--ease-cafe),
     border-color 180ms var(--ease-cafe),
+    box-shadow 180ms var(--ease-cafe),
     transform 120ms var(--ease-cafe);
   -webkit-tap-highlight-color: transparent;
 }
 .chip:active {
   transform: scale(0.97);
+}
+@media (hover: hover) {
+  .chip:hover {
+    border-color: var(--color-line-strong);
+  }
+}
+
+/* Small uppercase label for a group of content; the rule carries the eye
+   across the page so the label never needs a kicker of its own. */
+.section-label {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--color-muted);
+}
+.section-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--color-line), transparent);
+}
+
+/* Brand lockup used on every dark header. */
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  border-radius: 0.9rem;
+  color: #fff7ee;
+  background:
+    radial-gradient(120% 120% at 30% 0%, rgb(255 255 255 / 0.28), transparent 55%),
+    linear-gradient(155deg, #d05a21 0%, #b5430d 55%, #8f320a 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.28),
+    0 8px 18px -12px rgb(0 0 0 / 0.8);
+}
+.brand-mark-sm {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.7rem;
+}
+
+/* Soft divider that reads as paper, not as a grey line. */
+.rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-line) 12%, var(--color-line) 88%, transparent);
+  border: 0;
 }
 
 /* Safe-area helpers for notched phones in standalone mode. env() is 0 on
@@ -219,7 +446,6 @@ a:focus-visible {
 .pt-safe {
   padding-top: max(0.75rem, env(safe-area-inset-top));
 }
-
 
 /* Subtle entrance for sheets/toasts; disabled when the user prefers less motion. */
 @keyframes cafe-rise {
@@ -233,7 +459,7 @@ a:focus-visible {
   }
 }
 .animate-rise {
-  animation: cafe-rise 220ms var(--ease-cafe) both;
+  animation: cafe-rise 260ms var(--ease-cafe) both;
 }
 @keyframes cafe-fade {
   from {
@@ -245,6 +471,28 @@ a:focus-visible {
 }
 .animate-fade {
   animation: cafe-fade 180ms ease-out both;
+}
+/* One authored moment: the steam above the cup drifts and thins. */
+@keyframes cafe-steam {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scaleY(0.92);
+  }
+  28% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-10px) scaleY(1.06);
+  }
+}
+.animate-steam {
+  animation: cafe-steam 5.5s var(--ease-cafe) infinite;
+  transform-origin: bottom center;
+}
+.animate-steam-slow {
+  animation-delay: 1.6s;
+  animation-duration: 6.8s;
 }
 
 @media (prefers-reduced-motion: reduce) {

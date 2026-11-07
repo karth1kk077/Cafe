@@ -1,6 +1,7 @@
 import { formatMoney } from "../../lib/api";
 import type { StoredCartLine } from "../../lib/session";
 import { BottomSheet } from "./BottomSheet";
+import { AlertIcon, MinusIcon, PlusIcon, ShoppingBagIcon } from "../ui/Icon";
 
 /**
  * Review + submit. Quantity edits stay local and instant; the server remains
@@ -58,13 +59,20 @@ export function CartSheet({
       }
     >
       {error && (
-        <div className="mb-3 rounded-control bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
-          {error}
+        <div
+          className="mb-3 flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2 text-sm text-danger"
+          role="alert"
+        >
+          <AlertIcon size={16} className="mt-0.5 shrink-0" />
+          <span>{error}</span>
         </div>
       )}
 
       {lines.length === 0 ? (
         <div className="py-10 text-center text-muted">
+          <span className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full bg-cream-deep text-copper/70">
+            <ShoppingBagIcon size={26} />
+          </span>
           <p className="display text-lg font-semibold text-espresso">Your order is empty</p>
           <p className="mt-1 text-sm">Close this and tap Add on something you like.</p>
         </div>
@@ -83,23 +91,23 @@ export function CartSheet({
                   </p>
                 )}
                 {line.specialInstructions && <p className="mt-0.5 text-xs italic text-muted">“{line.specialInstructions}”</p>}
-                <div className="mt-2 flex items-center gap-1">
+                <div className="mt-2 inline-flex items-center gap-1 rounded-control border border-line bg-cream/60 p-0.5">
                   <button
                     type="button"
-                    className="btn btn-ghost !min-h-9 !px-3"
+                    className="btn btn-ghost btn-icon !min-h-9 !border-0 !bg-transparent !px-2"
                     aria-label={`Remove one ${line.name}`}
                     onClick={() => onQuantity(line.key, -1)}
                   >
-                    −
+                    <MinusIcon size={15} />
                   </button>
                   <span className="num min-w-6 text-center text-sm font-bold">{line.quantity}</span>
                   <button
                     type="button"
-                    className="btn btn-ghost !min-h-9 !px-3"
+                    className="btn btn-ghost btn-icon !min-h-9 !border-0 !bg-transparent !px-2"
                     aria-label={`Add one ${line.name}`}
                     onClick={() => onQuantity(line.key, 1)}
                   >
-                    +
+                    <PlusIcon size={15} />
                   </button>
                 </div>
               </div>

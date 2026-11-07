@@ -18,6 +18,7 @@ import { ItemSheet } from "../components/customer/ItemSheet";
 import { CartBar } from "../components/customer/CartBar";
 import { CartSheet } from "../components/customer/CartSheet";
 import { Toast, type ToastMessage, type ToastTone } from "../components/customer/Toast";
+import { AlertIcon, CoffeeIcon, MenuBookIcon, RefreshIcon } from "../components/ui/Icon";
 
 function newIdempotencyKey() {
   return crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
@@ -30,7 +31,9 @@ function MenuSkeleton() {
       <div className="h-11 animate-pulse rounded-control bg-line" />
       {[0, 1, 2].map((row) => (
         <div key={row} className="card flex gap-3 p-3">
-          <div className="h-20 w-20 shrink-0 animate-pulse rounded-control bg-cream" />
+          <div className="grid h-[5.5rem] w-[5.5rem] shrink-0 animate-pulse place-items-center rounded-control bg-cream-deep">
+            <CoffeeIcon size={26} className="text-line-strong" />
+          </div>
           <div className="flex-1 space-y-2 py-1">
             <div className="h-4 w-2/3 animate-pulse rounded bg-line" />
             <div className="h-3 w-full animate-pulse rounded bg-line" />
@@ -47,13 +50,14 @@ function TableProblem({ message, retry }: { message: string; retry: () => void }
   return (
     <div className="flex min-h-screen items-center justify-center bg-cream p-4">
       <div className="card w-full max-w-sm p-6 text-center">
-        <div aria-hidden className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-amber-soft text-2xl">
-          ⚠
+        <div aria-hidden className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full bg-amber-soft text-amber-ink">
+          <AlertIcon size={26} />
         </div>
         <h1 className="display text-xl font-semibold">We couldn’t open this table</h1>
         <p className="mt-2 text-sm text-muted">{message}</p>
         <div className="mt-5 space-y-2">
           <button type="button" className="btn btn-primary w-full" onClick={retry}>
+            <RefreshIcon size={16} />
             Try again
           </button>
           <Link to="/" className="btn btn-ghost w-full">
@@ -364,9 +368,15 @@ export function CustomerMenu() {
       <main className="mx-auto max-w-2xl space-y-6 p-3 pt-4">
         {menuError && (
           <div className="card p-4 text-sm" role="alert">
-            <p className="font-semibold">The menu didn’t load.</p>
-            <p className="mt-1 text-muted">{menuError.message}</p>
+            <div className="flex items-start gap-2">
+              <AlertIcon size={17} className="mt-0.5 shrink-0 text-danger" />
+              <div>
+                <p className="font-semibold">The menu didn’t load.</p>
+                <p className="mt-1 text-muted">{menuError.message}</p>
+              </div>
+            </div>
             <button type="button" className="btn btn-ghost mt-3" onClick={() => refetchMenu()}>
+              <RefreshIcon size={15} />
               Try again
             </button>
           </div>
@@ -386,7 +396,7 @@ export function CustomerMenu() {
           >
             <h2
               id={`menu-heading-${category.id}`}
-              className="mb-2 px-1 text-sm font-bold uppercase tracking-[0.12em] text-muted"
+              className="section-label mb-2 px-1"
             >
               {category.name}
             </h2>
@@ -400,6 +410,9 @@ export function CustomerMenu() {
 
         {menu && !filtered.length && (
           <div className="card p-8 text-center">
+            <span className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full bg-cream-deep text-copper/70">
+              <MenuBookIcon size={26} />
+            </span>
             <p className="display text-lg font-semibold">
               {menuSearch.trim() ? "Nothing matched that search" : "The menu is being updated"}
             </p>

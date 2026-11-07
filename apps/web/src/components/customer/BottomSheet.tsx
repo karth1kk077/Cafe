@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
+import { CloseIcon } from "../ui/Icon";
 
 const HISTORY_FLAG = "cafeSheet";
 
@@ -95,7 +96,7 @@ export function BottomSheet({
       <button
         type="button"
         aria-label="Close"
-        className="absolute inset-0 bg-espresso/50 animate-fade"
+        className="absolute inset-0 bg-espresso/55 backdrop-blur-[2px] animate-fade"
         onClick={() => onCloseRef.current()}
       />
       <div
@@ -105,14 +106,19 @@ export function BottomSheet({
         aria-labelledby={titleId}
         tabIndex={-1}
         onKeyDown={handleKeyDown}
-        className="relative w-full sm:max-w-md max-h-[92dvh] overflow-y-auto rounded-t-sheet sm:rounded-sheet bg-surface shadow-lift animate-rise outline-none"
+        className="relative max-h-[92dvh] w-full overflow-y-auto rounded-t-sheet border border-line/80 bg-surface shadow-lift outline-none animate-rise sm:max-w-md sm:rounded-sheet"
       >
+        <div aria-hidden className="mx-auto mt-2 h-1 w-10 rounded-full bg-line-strong sm:hidden" />
         <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-line bg-surface/95 px-4 py-3 backdrop-blur">
           <h2 id={titleId} className="display text-lg font-semibold">
             {title}
           </h2>
-          <button className="btn btn-ghost !min-h-10 !px-3" aria-label="Close" onClick={() => onCloseRef.current()}>
-            ✕
+          <button
+            className="btn btn-ghost btn-icon !min-h-10"
+            aria-label="Close"
+            onClick={() => onCloseRef.current()}
+          >
+            <CloseIcon size={18} />
           </button>
         </div>
         <div className="px-4 py-4">{children}</div>

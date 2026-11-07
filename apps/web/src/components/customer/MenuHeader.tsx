@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { BrandCupIcon, ReceiptIcon, SearchIcon } from "../ui/Icon";
 
 export interface MenuStatus {
   tone: "info" | "warn" | "success";
@@ -6,9 +7,9 @@ export interface MenuStatus {
 }
 
 const STATUS_STYLE: Record<MenuStatus["tone"], string> = {
-  info: "bg-white/10 border-white/20 text-white/90",
-  warn: "bg-amber-soft border-line-strong text-amber-ink",
-  success: "bg-forest-soft border-forest/20 text-forest",
+  info: "border-white/20 bg-white/10 text-white/90",
+  warn: "border-line-strong bg-amber-soft text-amber-ink",
+  success: "border-forest/20 bg-forest-soft text-forest",
 };
 
 /**
@@ -31,24 +32,35 @@ export function MenuHeader({
   ordersHref: string;
 }) {
   return (
-    <header className="bg-espresso text-white px-4 pb-3 pt-safe">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-xs font-medium uppercase tracking-[0.14em] text-white/60">{cafeName}</div>
-          <div className="display truncate text-2xl font-semibold leading-tight">Table {tableNumber}</div>
+    <header className="topbar px-4 pb-3 pt-safe">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="brand-mark brand-mark-sm">
+            <BrandCupIcon size={18} />
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-[0.66rem] font-semibold uppercase tracking-[0.16em] text-white/55">
+              {cafeName}
+            </div>
+            <div className="display truncate text-[1.4rem] font-semibold leading-tight">Table {tableNumber}</div>
+          </div>
         </div>
-        <Link to={ordersHref} className="btn btn-ghost shrink-0 !min-h-10 !border-white/25 !bg-white/10 !px-3 !text-white text-sm">
-          Orders & bill
+        <Link
+          to={ordersHref}
+          className="btn btn-ghost !min-h-10 shrink-0 !border-white/20 !bg-white/10 !px-3 !text-white"
+        >
+          <ReceiptIcon size={16} />
+          <span className="hidden text-sm min-[380px]:inline">Orders &amp; bill</span>
         </Link>
       </div>
 
       <div className="relative mt-3">
-        <span aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/50">
-          ⌕
+        <span aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/55">
+          <SearchIcon size={18} />
         </span>
         <input
           type="search"
-          className="input !border-white/25 !bg-white/10 !pl-9 !text-white"
+          className="input input-ink !pl-10"
           placeholder="Search the menu"
           aria-label="Search the menu"
           value={search}
@@ -57,8 +69,12 @@ export function MenuHeader({
       </div>
 
       {status && (
-        <div className={`mt-3 rounded-control border px-3 py-2 text-sm ${STATUS_STYLE[status.tone]}`} role="status">
-          {status.message}
+        <div
+          className={`mt-3 flex items-start gap-2 rounded-control border px-3 py-2 text-sm ${STATUS_STYLE[status.tone]}`}
+          role="status"
+        >
+          <span aria-hidden className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
+          <span>{status.message}</span>
         </div>
       )}
     </header>

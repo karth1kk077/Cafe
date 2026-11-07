@@ -30,7 +30,11 @@ export function CategoryTabs({
   if (!categories.length) return null;
 
   return (
-    <nav ref={railRef} aria-label="Menu categories" className="flex gap-2 overflow-x-auto bg-surface border-b border-line px-3 py-2 [scrollbar-width:none]">
+    <nav
+      ref={railRef}
+      aria-label="Menu categories"
+      className="flex gap-2 overflow-x-auto border-b border-line bg-surface/95 px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
       {categories.map((category) => {
         const active = category.id === activeId;
         return (
@@ -39,7 +43,11 @@ export function CategoryTabs({
             type="button"
             data-category={category.id}
             aria-current={active ? "true" : undefined}
-            className={`chip whitespace-nowrap ${active ? "!bg-espresso text-white" : "bg-cream text-espresso"}`}
+            className={`chip whitespace-nowrap ${
+              active
+                ? "!bg-espresso text-white shadow-[0_6px_14px_-10px_rgb(43_29_20/0.9)]"
+                : "bg-cream text-espresso"
+            }`}
             onClick={() => onSelect(category.id)}
           >
             {category.name}
