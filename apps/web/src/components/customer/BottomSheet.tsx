@@ -4,6 +4,14 @@ import { CloseIcon } from "../ui/Icon";
 const HISTORY_FLAG = "cafeSheet";
 
 /**
+ * Sheets can mount and unmount back-to-back (a different dish, or React
+ * StrictMode's mount → cleanup → mount). Only the last one to close should
+ * drop the shared history entry, and only after a remount has had a chance
+ * to claim it.
+ */
+let openSheets = 0;
+
+/**
  * Mobile bottom sheet with the accessibility and navigation behaviour a phone
  * user expects:
  *  - Android/iOS back closes the sheet instead of leaving the menu
@@ -26,17 +34,23 @@ export function BottomSheet({
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
 
+    openSheets += 1;
     const previouslyFocused = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
     // One history entry per sheet makes hardware/browser back a "close".
-    window.history.pushState({ ...(window.history.state ?? {}), [HISTORY_FLAG]: true }, "");
+    // A remount (e.g. StrictMode) reuses the entry it already pushed.
+    if (!window.history.state?.[HISTORY_FLAG]) {
+      window.history.pushState({ ...(window.history.state ?? {}), [HISTORY_FLAG]: true }, "");
+    }
 
     let active = true;
     const onPop = () => {
@@ -55,13 +69,19 @@ export function BottomSheet({
 
     return () => {
       active = false;
+      openSheets = Math.max(0, openSheets - 1);
       window.clearTimeout(focusTimer);
       window.removeEventListener("popstate", onPop);
       document.body.style.overflow = previousOverflow;
       previouslyFocused?.focus?.();
       // Programmatic close (button, Escape, order placed): drop our history
-      // entry too, so the next Back does not appear to do nothing.
-      if (window.history.state?.[HISTORY_FLAG]) window.history.back();
+      // entry too, so the next Back does not appear to do nothing. Deferred so
+      // a StrictMode remount or an immediately-opened sheet can claim it first.
+      if (window.history.state?.[HISTORY_FLAG]) {
+        window.setTimeout(() => {
+          if (openSheets === 0 && window.history.state?.[HISTORY_FLAG]) window.history.back();
+        }, 0);
+      }
     };
   }, [open]);
 
